@@ -629,6 +629,7 @@ def _run_analysis(job_id):
             statutes_context=statutes_context,
             jurisdiction=jurisdiction,
             model=selected_model,
+            log_fn=lambda msg: _log_activity(job_id, msg),
         )
         usage = analysis.get("usage", {})
         if usage:

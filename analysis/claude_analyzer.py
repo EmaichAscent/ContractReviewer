@@ -17,7 +17,7 @@ def load_prompts():
         return {}
 
 
-def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None):
+def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None):
     """Analyze a contract against the ideal template and scoring criteria.
 
     Args:
@@ -26,10 +26,15 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
         statutes_context: formatted string of relevant statutes
         jurisdiction: dict with state info from jurisdiction detector
         model: Claude model ID to use (overrides config default)
+        log_fn: optional callback function(message) for progress logging
 
     Returns:
         dict with analysis results including scores, explanations, and revisions
     """
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
+
     prompts = load_prompts()
     criteria_data = load_criteria()
     model = model or config.CLAUDE_MODEL
@@ -64,6 +69,16 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
 
 Please analyze the contract and return your complete analysis as JSON."""
 
+    # Calculate word counts for logging
+    contract_words = len(contract_text.split())
+    template_words = len(ideal_template_text.split())
+    total_prompt_words = len(user_prompt.split())
+    num_criteria = sum(len(c["criteria"]) for c in criteria_data["categories"].values())
+
+    log(f"Preparing analysis prompt: {contract_words:,} contract words + {template_words:,} template words")
+    log(f"Scoring against {num_criteria} criteria across {len(criteria_data['categories'])} categories")
+    log(f"Sending {total_prompt_words:,} words to {model} (this may take 2-5 minutes)...")
+
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     response = client.messages.create(
         model=model,
@@ -73,7 +88,16 @@ Please analyze the contract and return your complete analysis as JSON."""
     )
 
     response_text = response.content[0].text
+    log(f"AI response received — {response.usage.output_tokens:,} tokens ({len(response_text):,} chars)")
+    log("Parsing analysis results and computing scores...")
+
     analysis = _parse_analysis_response(response_text, criteria_data)
+
+    if analysis.get("parse_error"):
+        log("WARNING: Could not parse JSON from AI response — results may be incomplete")
+    else:
+        score = analysis.get("overall_score", 0)
+        log(f"Analysis parsed successfully — overall score: {score:.0%}")
 
     # Track token usage
     usage = {
@@ -83,8 +107,19 @@ Please analyze the contract and return your complete analysis as JSON."""
     }
 
     # Now get specific revision suggestions
+    weak_count = 0
+    for cat_data in analysis.get("categories", {}).values():
+        for crit_result in cat_data.get("criteria", {}).values():
+            if isinstance(crit_result, dict) and crit_result.get("score", 2) < 2:
+                weak_count += 1
+
+    if weak_count > 0:
+        log(f"Found {weak_count} criteria scoring below threshold — requesting revision suggestions...")
+    else:
+        log("All criteria scored well — skipping revision request")
+
     revisions, rev_usage = _get_revisions(
-        client, system_prompt, prompts, contract_text, analysis, model
+        client, system_prompt, prompts, contract_text, analysis, model, log_fn=log_fn
     )
     analysis["revisions"] = revisions
 
@@ -95,11 +130,18 @@ Please analyze the contract and return your complete analysis as JSON."""
     usage["estimated_cost"] = _estimate_cost(model, usage["total_input_tokens"], usage["total_output_tokens"])
     analysis["usage"] = usage
 
+    log(f"Total API usage: {usage['total_input_tokens']:,} input + {usage['total_output_tokens']:,} output tokens")
+    log(f"Estimated cost: ${usage['estimated_cost']:.4f}")
+
     return analysis
 
 
-def _get_revisions(client, system_prompt, prompts, contract_text, analysis, model=None):
+def _get_revisions(client, system_prompt, prompts, contract_text, analysis, model=None, log_fn=None):
     """Get specific text revisions for track changes."""
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
+
     model = model or config.CLAUDE_MODEL
     revision_prompt = prompts.get("revision_prompt", "Suggest revisions.")
 
@@ -129,6 +171,8 @@ def _get_revisions(client, system_prompt, prompts, contract_text, analysis, mode
 
 Generate specific, actionable text revisions as a JSON array."""
 
+    log(f"Sending revision request to {model} for {len(weak_areas)} weak areas...")
+
     response = client.messages.create(
         model=model,
         max_tokens=config.MAX_TOKENS,
@@ -136,11 +180,14 @@ Generate specific, actionable text revisions as a JSON array."""
         messages=[{"role": "user", "content": user_prompt}],
     )
 
+    revisions = _extract_json_array(response.content[0].text)
+    log(f"Revision response received — {len(revisions)} specific text changes suggested")
+
     rev_usage = {
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
     }
-    return _extract_json_array(response.content[0].text), rev_usage
+    return revisions, rev_usage
 
 
 def _estimate_cost(model, input_tokens, output_tokens):
