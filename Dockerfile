@@ -16,6 +16,6 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p uploads results data data/reference_contracts
 
-EXPOSE 5000
+EXPOSE ${PORT:-5000}
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "300", "app:app"]
+CMD gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 2 --threads 4 --timeout 300 app:app
