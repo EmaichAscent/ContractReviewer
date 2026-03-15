@@ -222,6 +222,60 @@
         }
       ]
     },
+    "Statutory Compliance": {
+      "weight": 0.30,
+      "description": "Alignment of contract provisions with applicable state and local statutes governing HOA/condo management, including licensing, financial reporting, collections, meetings, and board governance requirements.",
+      "criteria": [
+        {
+          "id": "statute_licensing",
+          "name": "Manager Licensing Compliance",
+          "description": "Contract reflects applicable state licensing requirements for community association managers",
+          "ideal": "Agreement references applicable state CAM licensing requirements and confirms manager holds required licenses."
+        },
+        {
+          "id": "statute_financial_reporting",
+          "name": "Financial Reporting Requirements",
+          "description": "Financial reporting provisions comply with state-mandated reporting and audit requirements",
+          "ideal": "Financial reporting schedule and content meets or exceeds state statutory requirements for community association financial disclosures."
+        },
+        {
+          "id": "statute_reserve_requirements",
+          "name": "Reserve Fund Compliance",
+          "description": "Reserve study and funding provisions align with state reserve requirements",
+          "ideal": "Reserve funding and study provisions comply with applicable state requirements for reserve studies, funding schedules, and disclosure."
+        },
+        {
+          "id": "statute_collections",
+          "name": "Assessment Collection Compliance",
+          "description": "Collection and lien procedures comply with state statutory requirements",
+          "ideal": "Assessment collection, late fees, lien filing, and foreclosure procedures comply with all applicable state statutes including required notice periods."
+        },
+        {
+          "id": "statute_meetings_notices",
+          "name": "Meeting and Notice Requirements",
+          "description": "Meeting notice, quorum, and voting provisions comply with state law",
+          "ideal": "Meeting notice periods, posting requirements, quorum rules, and voting procedures comply with applicable state statutes."
+        },
+        {
+          "id": "statute_records_access",
+          "name": "Records Access Compliance",
+          "description": "Owner access to association records complies with state transparency requirements",
+          "ideal": "Records access provisions meet or exceed state-mandated owner rights to inspect and copy association records within required timeframes."
+        },
+        {
+          "id": "statute_termination_notice",
+          "name": "Termination Notice Compliance",
+          "description": "Termination provisions comply with any state-mandated notice periods or procedures",
+          "ideal": "Termination notice periods and procedures comply with applicable state requirements for management agreement termination."
+        },
+        {
+          "id": "statute_conflicts",
+          "name": "Direct Statutory Conflicts",
+          "description": "Contract provisions that directly contradict or violate specific statutes",
+          "ideal": "No provisions in the agreement conflict with applicable state or local statutes. All terms are enforceable under current law."
+        }
+      ]
+    },
     "Maximize Business Value": {
       "weight": 0.39,
       "description": "Agreement's ability to support transferability of rights and obligations to increase company's long-term business value.",

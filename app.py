@@ -33,6 +33,7 @@ from analysis.claude_analyzer import analyze_contract
 from analysis.scoring_criteria import load_criteria
 from output.scorecard_generator import generate_scorecard
 from output.scorecard_pdf import generate_scorecard_pdf
+from output.executive_summary_pdf import generate_executive_summary_pdf
 from output.trackchanges import apply_track_changes
 
 app = Flask(__name__)
@@ -243,6 +244,9 @@ def download(job_id, file_type):
     elif file_type == "scorecard_pdf":
         path = os.path.join(job_dir, "scorecard.pdf")
         name = f"Scorecard - {client}.pdf"
+    elif file_type == "executive_summary":
+        path = os.path.join(job_dir, "executive_summary.pdf")
+        name = f"Executive Summary - {client}.pdf"
     elif file_type == "marked":
         path = os.path.join(job_dir, "marked_contract.docx")
         name = f"Marked Contract - {client}.docx"
@@ -297,7 +301,7 @@ def admin():
     criteria = load_criteria()
     settings = _load_settings()
     reference_contracts = _list_reference_contracts()
-    template_name = os.path.basename(config.IDEAL_TEMPLATE_PATH) if os.path.exists(config.IDEAL_TEMPLATE_PATH) else "Not uploaded"
+    template_name = settings.get("ideal_template_name", os.path.basename(config.IDEAL_TEMPLATE_PATH)) if os.path.exists(config.IDEAL_TEMPLATE_PATH) else "Not uploaded"
     template_size = ""
     if os.path.exists(config.IDEAL_TEMPLATE_PATH):
         sz = os.path.getsize(config.IDEAL_TEMPLATE_PATH)
@@ -489,6 +493,10 @@ def admin_template_replace():
             backup_path = config.IDEAL_TEMPLATE_PATH + ".backup"
             shutil.copy2(config.IDEAL_TEMPLATE_PATH, backup_path)
         file.save(config.IDEAL_TEMPLATE_PATH)
+        # Save the original filename for display
+        settings = _load_settings()
+        settings["ideal_template_name"] = file.filename
+        _save_settings(settings)
         flash("Ideal template replaced. Previous version backed up.", "success")
     return redirect(url_for("admin"))
 
@@ -658,6 +666,14 @@ def _run_analysis(job_id):
             generate_scorecard_pdf(analysis, job["client_name"], scorecard_pdf_path, jurisdiction)
         except Exception as e:
             print(f"PDF generation error: {e}")
+
+        # Generate executive summary PDF
+        exec_summary_path = os.path.join(job_dir, "executive_summary.pdf")
+        try:
+            generate_executive_summary_pdf(analysis, job["client_name"], exec_summary_path, jurisdiction)
+            _log_activity(job_id, "Executive summary PDF generated")
+        except Exception as e:
+            print(f"Executive summary PDF error: {e}")
 
         # Step 8: Generate marked-up contract
         _update_job(job_id, 90, "Generating marked-up contract...")
