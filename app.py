@@ -297,12 +297,19 @@ def admin():
     criteria = load_criteria()
     settings = _load_settings()
     reference_contracts = _list_reference_contracts()
+    template_name = os.path.basename(config.IDEAL_TEMPLATE_PATH) if os.path.exists(config.IDEAL_TEMPLATE_PATH) else "Not uploaded"
+    template_size = ""
+    if os.path.exists(config.IDEAL_TEMPLATE_PATH):
+        sz = os.path.getsize(config.IDEAL_TEMPLATE_PATH)
+        template_size = f"{sz / 1024:.0f} KB" if sz < 1048576 else f"{sz / 1048576:.1f} MB"
     return render_template("admin.html",
         prompts=prompts,
         criteria=criteria,
         models=config.AVAILABLE_MODELS,
         current_model=settings.get("model", config.CLAUDE_MODEL),
         reference_contracts=reference_contracts,
+        template_name=template_name,
+        template_size=template_size,
     )
 
 

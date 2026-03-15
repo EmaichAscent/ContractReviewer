@@ -137,7 +137,8 @@
         <div class="reference-list">
             <h3>Ideal Template</h3>
             <div class="reference-item">
-                <span>Management_Agreement_Template.docx</span>
+                <span>{{ template_name }}</span>
+                {% if template_size %}<span class="badge-size">{{ template_size }}</span>{% endif %}
                 <span class="badge">Primary Template</span>
             </div>
 
