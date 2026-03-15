@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Review History - Contract Reviewer{% endblock %}
+{% block content %}
+<div class="history-section">
+    <h1>Review History</h1>
+    {% if jobs %}
+    <table class="history-table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Client</th>
+                <th>State</th>
+                <th>Overall Score</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td>{{ job.date }}</td>
+                <td>{{ job.client_name }}</td>
+                <td>{{ job.state or 'N/A' }}</td>
+                <td>
+                    <span class="score {{ 'good' if job.overall_score >= 70 else 'warn' if job.overall_score >= 40 else 'bad' }}">
+                        {{ job.overall_score }}%
+                    </span>
+                </td>
+                <td>
+                    <a href="/results/{{ job.id }}">View</a> |
+                    <a href="/download/{{ job.id }}/scorecard">Scorecard</a> |
+                    <a href="/download/{{ job.id }}/marked">Marked Contract</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No reviews completed yet. <a href="/">Upload a contract</a> to get started.</p>
+    {% endif %}
+</div>
+{% endblock %}

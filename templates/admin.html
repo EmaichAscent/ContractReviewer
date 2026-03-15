@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Admin - Contract Reviewer{% endblock %}
+{% block content %}
+<div class="admin-section">
+    <h1>Administration</h1>
+
+    <!-- Model Toggle -->
+    <div class="admin-card">
+        <h2>AI Model</h2>
+        <p class="help-text">Choose the Claude model used for contract analysis.</p>
+        <form action="/admin/model" method="POST" class="inline-form">
+            <div class="model-toggle">
+                {% for model_id, model_label in models.items() %}
+                <label class="model-option {{ 'selected' if current_model == model_id }}">
+                    <input type="radio" name="model" value="{{ model_id }}"
+                           {{ 'checked' if current_model == model_id }}
+                           onchange="this.form.submit()">
+                    <span class="model-label">{{ model_label }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </form>
+    </div>
+
+    <!-- Prompt Configuration -->
+    <div class="admin-card">
+        <h2>Analysis Prompts</h2>
+        <p class="help-text">Fine-tune the prompts used by the AI. Changes take effect on the next analysis.</p>
+        <form action="/admin/save" method="POST" class="admin-form">
+            <div class="form-group">
+                <label for="system_prompt">System Prompt</label>
+                <p class="help-text">Sets the AI's role and overall behavior.</p>
+                <textarea name="system_prompt" id="system_prompt" rows="6">{{ prompts.system_prompt }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="analysis_prompt">Analysis Prompt</label>
+                <p class="help-text">How to analyze and score each contract. Contract text, template, and criteria are appended automatically.</p>
+                <textarea name="analysis_prompt" id="analysis_prompt" rows="10">{{ prompts.analysis_prompt }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="statute_search_prompt">Statute Search Prompt</label>
+                <p class="help-text">How to find relevant statutes. Use {state} as placeholder.</p>
+                <textarea name="statute_search_prompt" id="statute_search_prompt" rows="6">{{ prompts.statute_search_prompt }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="revision_prompt">Revision Prompt</label>
+                <p class="help-text">How to generate specific text revisions for track changes.</p>
+                <textarea name="revision_prompt" id="revision_prompt" rows="6">{{ prompts.revision_prompt }}</textarea>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Save Prompts</button>
+                <a href="/admin/reset" class="btn btn-secondary" onclick="return confirm('Reset all prompts to defaults?')">Reset to Defaults</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Scoring Criteria Editor -->
+    <div class="admin-card">
+        <h2>Scoring Criteria</h2>
+        <p class="help-text">Edit the categories, weights, and individual criteria used to score contracts.</p>
+
+        {% for cat_name, cat_data in criteria.categories.items() %}
+        <div class="criteria-category">
+            <div class="criteria-category-header">
+                <h3>{{ cat_name }}</h3>
+                <form action="/admin/criteria/weight" method="POST" class="inline-form">
+                    <input type="hidden" name="category" value="{{ cat_name }}">
+                    <label>Weight:
+                        <input type="number" name="weight" value="{{ cat_data.weight }}" step="0.01" min="0" max="1" class="weight-input">
+                    </label>
+                    <button type="submit" class="btn btn-small btn-secondary">Update</button>
+                </form>
+            </div>
+            <p class="category-desc">{{ cat_data.description }}</p>
+
+            <table class="criteria-table">
+                <thead>
+                    <tr>
+                        <th>Criterion</th>
+                        <th>Description</th>
+                        <th>Ideal Language</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for crit in cat_data.criteria %}
+                    <tr>
+                        <td><strong>{{ crit.name }}</strong><br><small>{{ crit.id }}</small></td>
+                        <td>{{ crit.description }}</td>
+                        <td class="ideal-text">{{ crit.ideal }}</td>
+                        <td>
+                            <a href="/admin/criteria/edit/{{ cat_name }}/{{ crit.id }}" class="btn btn-small btn-secondary">Edit</a>
+                            <form action="/admin/criteria/delete" method="POST" class="inline-form"
+                                  onsubmit="return confirm('Delete this criterion?')">
+                                <input type="hidden" name="category" value="{{ cat_name }}">
+                                <input type="hidden" name="criterion_id" value="{{ crit.id }}">
+                                <button type="submit" class="btn btn-small btn-danger">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <details class="add-criterion">
+                <summary class="btn btn-small btn-secondary">+ Add Criterion to {{ cat_name }}</summary>
+                <form action="/admin/criteria/add" method="POST" class="criterion-form">
+                    <input type="hidden" name="category" value="{{ cat_name }}">
+                    <div class="form-row">
+                        <input type="text" name="id" placeholder="unique_id (e.g., profit_new_item)" required>
+                        <input type="text" name="name" placeholder="Display Name" required>
+                    </div>
+                    <textarea name="description" placeholder="What this criterion checks for..." rows="2" required></textarea>
+                    <textarea name="ideal" placeholder="Ideal contract language..." rows="2" required></textarea>
+                    <button type="submit" class="btn btn-small btn-primary">Add Criterion</button>
+                </form>
+            </details>
+        </div>
+        {% endfor %}
+
+        <details class="add-category">
+            <summary class="btn btn-secondary">+ Add New Category</summary>
+            <form action="/admin/criteria/add-category" method="POST" class="criterion-form">
+                <input type="text" name="name" placeholder="Category Name" required>
+                <input type="number" name="weight" placeholder="Weight (0-1)" step="0.01" min="0" max="1" value="0.25" required>
+                <textarea name="description" placeholder="Category description..." rows="2" required></textarea>
+                <button type="submit" class="btn btn-primary">Add Category</button>
+            </form>
+        </details>
+    </div>
+
+    <!-- Reference Contracts -->
+    <div class="admin-card">
+        <h2>Reference Contracts</h2>
+        <p class="help-text">Upload example contracts that represent best practices. These are used alongside the ideal template during analysis.</p>
+
+        <div class="reference-list">
+            <h3>Ideal Template</h3>
+            <div class="reference-item">
+                <span>Management_Agreement_Template.docx</span>
+                <span class="badge">Primary Template</span>
+            </div>
+
+            {% if reference_contracts %}
+            <h3>Additional Reference Contracts</h3>
+            {% for ref in reference_contracts %}
+            <div class="reference-item">
+                <span>{{ ref.name }}</span>
+                <span class="badge badge-secondary">{{ ref.size }}</span>
+                <form action="/admin/reference/delete" method="POST" class="inline-form"
+                      onsubmit="return confirm('Remove this reference contract?')">
+                    <input type="hidden" name="filename" value="{{ ref.name }}">
+                    <button type="submit" class="btn btn-small btn-danger">Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+
+        <form action="/admin/reference/upload" method="POST" enctype="multipart/form-data" class="upload-ref-form">
+            <div class="form-row">
+                <input type="file" name="reference" accept=".doc,.docx" required>
+                <input type="text" name="description" placeholder="Brief description (e.g., 'Strong FL condo agreement')">
+                <button type="submit" class="btn btn-primary">Upload Reference</button>
+            </div>
+        </form>
+
+        <h3>Replace Ideal Template</h3>
+        <p class="help-text">Upload a new ideal template to replace the current one. The old template will be backed up.</p>
+        <form action="/admin/template/replace" method="POST" enctype="multipart/form-data" class="upload-ref-form">
+            <div class="form-row">
+                <input type="file" name="template" accept=".doc,.docx" required>
+                <button type="submit" class="btn btn-secondary">Replace Template</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.env
+
+# Uploads and results (user data, not code)
+uploads/
+results/
+
+# Database
+data/statutes.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+flask_output.log
+
+# Samples (large binary files)
+Samples/
+
+# Claude memory
+.claude/

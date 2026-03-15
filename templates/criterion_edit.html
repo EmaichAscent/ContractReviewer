@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Edit Criterion - {{ criterion.name }}{% endblock %}
+{% block content %}
+<div class="admin-section">
+    <h1>Edit Criterion</h1>
+    <p>Category: <strong>{{ category_name }}</strong></p>
+
+    <form action="/admin/criteria/update" method="POST" class="admin-form">
+        <input type="hidden" name="category" value="{{ category_name }}">
+        <input type="hidden" name="original_id" value="{{ criterion.id }}">
+
+        <div class="form-group">
+            <label for="id">Criterion ID</label>
+            <input type="text" name="id" id="id" value="{{ criterion.id }}" required>
+        </div>
+
+        <div class="form-group">
+            <label for="name">Display Name</label>
+            <input type="text" name="name" id="name" value="{{ criterion.name }}" required>
+        </div>
+
+        <div class="form-group">
+            <label for="description">Description</label>
+            <p class="help-text">What this criterion checks for in the contract.</p>
+            <textarea name="description" id="description" rows="3" required>{{ criterion.description }}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="ideal">Ideal Contract Language</label>
+            <p class="help-text">The ideal/best-practice language that should appear in a well-written contract.</p>
+            <textarea name="ideal" id="ideal" rows="4" required>{{ criterion.ideal }}</textarea>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+            <a href="/admin" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

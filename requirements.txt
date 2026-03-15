@@ -1,0 +1,8 @@
+flask
+gunicorn
+python-docx
+anthropic
+openpyxl
+lxml
+pdfplumber
+reportlab

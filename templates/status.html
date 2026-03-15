@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Analysis in Progress - Contract Reviewer{% endblock %}
+{% block content %}
+<div class="status-section">
+    <h1>Analysis in Progress</h1>
+    <p>Analyzing: <strong>{{ client_name }}</strong></p>
+
+    <div class="progress-container">
+        <div class="progress-bar" id="progressBar" style="width: {{ progress }}%">
+            {{ progress }}%
+        </div>
+    </div>
+
+    <p class="status-message" id="statusMessage">{{ status_message }}</p>
+
+    <div class="status-steps">
+        <div class="step {{ 'complete' if progress >= 20 else 'active' if progress >= 0 else '' }}">
+            <span class="step-icon">{% if progress >= 20 %}&#10003;{% else %}&#9679;{% endif %}</span>
+            Parsing contract
+        </div>
+        <div class="step {{ 'complete' if progress >= 40 else 'active' if progress >= 20 else '' }}">
+            <span class="step-icon">{% if progress >= 40 %}&#10003;{% else %}&#9679;{% endif %}</span>
+            Detecting jurisdiction
+        </div>
+        <div class="step {{ 'complete' if progress >= 60 else 'active' if progress >= 40 else '' }}">
+            <span class="step-icon">{% if progress >= 60 %}&#10003;{% else %}&#9679;{% endif %}</span>
+            Searching statutes
+        </div>
+        <div class="step {{ 'complete' if progress >= 80 else 'active' if progress >= 60 else '' }}">
+            <span class="step-icon">{% if progress >= 80 %}&#10003;{% else %}&#9679;{% endif %}</span>
+            AI analysis & scoring
+        </div>
+        <div class="step {{ 'complete' if progress >= 100 else 'active' if progress >= 80 else '' }}">
+            <span class="step-icon">{% if progress >= 100 %}&#10003;{% else %}&#9679;{% endif %}</span>
+            Generating reports
+        </div>
+    </div>
+
+    <div class="activity-log" id="activityLog">
+        <h3>Activity Log</h3>
+        <div class="log-entries" id="logEntries">
+            <div class="log-entry">Waiting for activity...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function checkStatus() {
+        fetch('/status/{{ job_id }}/json')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('progressBar').style.width = data.progress + '%';
+                document.getElementById('progressBar').textContent = data.progress + '%';
+                document.getElementById('statusMessage').textContent = data.status_message;
+
+                // Update step indicators
+                const steps = document.querySelectorAll('.step');
+                const thresholds = [20, 40, 60, 80, 100];
+                steps.forEach((step, i) => {
+                    step.className = 'step';
+                    if (data.progress >= thresholds[i]) {
+                        step.className = 'step complete';
+                        step.querySelector('.step-icon').innerHTML = '&#10003;';
+                    } else if (i === 0 || data.progress >= thresholds[i-1]) {
+                        step.className = 'step active';
+                    }
+                });
+
+                // Update activity log
+                if (data.activity_log && data.activity_log.length > 0) {
+                    const logEl = document.getElementById('logEntries');
+                    logEl.innerHTML = data.activity_log.map(
+                        entry => '<div class="log-entry">' + entry + '</div>'
+                    ).join('');
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+
+                if (data.status === 'complete') {
+                    window.location.href = '/results/' + '{{ job_id }}';
+                } else if (data.status === 'error') {
+                    document.getElementById('statusMessage').textContent = 'Error: ' + data.error;
+                    document.getElementById('statusMessage').style.color = '#c00000';
+                    document.getElementById('statusMessage').innerHTML += '<br><br><a href="/" class="btn btn-primary">Start New Review</a>';
+                } else {
+                    setTimeout(checkStatus, 2000);
+                }
+            })
+            .catch(() => setTimeout(checkStatus, 5000));
+    }
+    setTimeout(checkStatus, 2000);
+</script>
+{% endblock %}

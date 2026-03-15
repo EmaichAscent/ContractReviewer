@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Statute Database - Contract Reviewer{% endblock %}
+{% block content %}
+<div class="statutes-section">
+    <h1>Statute Database</h1>
+    <p>Cached statutes from previous reviews. These are automatically searched and stored when analyzing contracts.</p>
+
+    {% if states %}
+    <div class="state-filter">
+        <label>Filter by State:</label>
+        {% for state in states %}
+        <a href="/statutes?state={{ state }}" class="btn btn-small {{ 'btn-primary' if selected_state == state else 'btn-secondary' }}">{{ state }}</a>
+        {% endfor %}
+        <a href="/statutes" class="btn btn-small btn-secondary">All</a>
+    </div>
+    {% endif %}
+
+    {% if statutes %}
+    <div class="statute-cards">
+        {% for statute in statutes %}
+        <div class="statute-card">
+            <div class="statute-header">
+                <h3>{{ statute.statute_number }} — {{ statute.title }}</h3>
+                <span class="state-badge">{{ statute.state }}</span>
+            </div>
+            <p class="statute-summary">{{ statute.summary }}</p>
+            {% if statute.relevance %}
+            <p class="statute-relevance"><strong>Relevance:</strong> {{ statute.relevance }}</p>
+            {% endif %}
+            {% if statute.source_url %}
+            <a href="{{ statute.source_url }}" target="_blank" class="statute-link">View Source</a>
+            {% endif %}
+            <small class="statute-date">Cached: {{ statute.fetched_at }}</small>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No statutes cached yet. They will be automatically discovered when you analyze contracts.</p>
+    {% endif %}
+</div>
+{% endblock %}

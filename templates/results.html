@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Results - {{ client_name }} - Contract Reviewer{% endblock %}
+{% block content %}
+<div class="results-section">
+    <h1>Contract Review Results</h1>
+    <div class="results-meta">
+        <p><strong>Client:</strong> {{ client_name }}</p>
+        {% if jurisdiction %}
+        <p><strong>Jurisdiction:</strong> {{ jurisdiction.state }} ({{ jurisdiction.state_abbrev }})</p>
+        {% endif %}
+        <p><strong>Review Date:</strong> {{ review_date }}</p>
+        {% if usage %}
+        <p><strong>Model:</strong> {{ usage.model }}
+        &nbsp;|&nbsp; <strong>Tokens:</strong> {{ "{:,}".format(usage.total_input_tokens) }} in / {{ "{:,}".format(usage.total_output_tokens) }} out
+        &nbsp;|&nbsp; <strong>Estimated Cost:</strong> ${{ "%.4f"|format(usage.estimated_cost) }}</p>
+        {% endif %}
+    </div>
+
+    <div class="download-buttons">
+        <a href="/download/{{ job_id }}/scorecard_pdf" class="btn btn-primary">Download Scorecard (PDF)</a>
+        <a href="/download/{{ job_id }}/scorecard" class="btn btn-secondary">Download Scorecard (Word)</a>
+        <a href="/download/{{ job_id }}/marked" class="btn btn-secondary">Download Marked-Up Contract</a>
+    </div>
+
+    <div class="overall-score">
+        <div class="score-circle {{ score_class }}">
+            <span class="score-number">{{ overall_pct }}%</span>
+        </div>
+        <h2>Overall Score</h2>
+        <p class="score-rating">{{ score_rating }}</p>
+    </div>
+
+    <div class="scores-summary">
+        {% for cat_name, cat_data in categories.items() %}
+        {% set cat_pct = (cat_data.score * 100) | round | int %}
+        <div class="score-bar-item">
+            <div class="score-bar-label">
+                <span>{{ cat_name }}</span>
+                <span class="score-bar-pct {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}">{{ cat_pct }}%</span>
+            </div>
+            <div class="score-bar-track">
+                <div class="score-bar-fill {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}" style="width: {{ cat_pct }}%"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% for cat_name, cat_data in categories.items() %}
+    <div class="category-card">
+        <div class="category-header">
+            <h3>{{ cat_name }}</h3>
+            <span class="category-score {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}">
+                {{ (cat_data.score * 100) | round | int }}%
+            </span>
+        </div>
+        {% if cat_data.summary %}
+        <p class="category-summary">{{ cat_data.summary }}</p>
+        {% endif %}
+        <div class="criteria-list">
+            {% for crit_id, crit in cat_data.criteria.items() %}
+            {% if crit is mapping %}
+            <div class="criterion {{ 'good' if crit.score == 2 else 'warn' if crit.score == 1 else 'bad' }}">
+                <div class="criterion-header">
+                    <span class="criterion-name">{{ crit_id | replace('profit_', '') | replace('empower_', '') | replace('risk_', '') | replace('board_', '') | replace('value_', '') | replace('_', ' ') | title }}</span>
+                    <span class="criterion-score-badge {{ 'good' if crit.score == 2 else 'warn' if crit.score == 1 else 'bad' }}">
+                        {% if crit.score == 2 %}Strong{% elif crit.score == 1 %}Weak{% else %}Missing{% endif %}
+                    </span>
+                </div>
+                {% if crit.explanation %}
+                <p class="criterion-detail">{{ crit.explanation }}</p>
+                {% endif %}
+                {% if crit.contract_text %}
+                <div class="contract-quote">
+                    <strong>Contract language:</strong> "{{ crit.contract_text[:300] }}{% if crit.contract_text|length > 300 %}...{% endif %}"
+                </div>
+                {% endif %}
+                {% if crit.suggested_revision %}
+                <div class="revision-suggestion">
+                    <strong>Recommended revision:</strong> {{ crit.suggested_revision[:500] }}{% if crit.suggested_revision|length > 500 %}...{% endif %}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+
+    {% if statute_concerns %}
+    <div class="statute-section">
+        <h2>Statutory Compliance Notes</h2>
+        <ul>
+            {% for concern in statute_concerns %}
+            <li>{{ concern }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if recommendation %}
+    <div class="recommendation-section">
+        <h2>Recommendation</h2>
+        <p>{{ recommendation }}</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

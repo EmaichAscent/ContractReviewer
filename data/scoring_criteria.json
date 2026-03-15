@@ -1,0 +1,268 @@
+{
+  "categories": {
+    "Profitability": {
+      "weight": 0.47,
+      "description": "Effectiveness of addendum rates, diversification through additional services, and clarity of scopes to mitigate scope creep and optimize revenue share opportunities.",
+      "criteria": [
+        {
+          "id": "profit_scope_creep",
+          "name": "Scope Creep Prevention",
+          "description": "Law changes to prevent scope creep; clear boundaries on what is included vs. additional",
+          "ideal": "Contract clearly defines base services and lists additional services with separate fees. Language addresses legislative changes that could expand scope."
+        },
+        {
+          "id": "profit_rfp_limits",
+          "name": "RFP Limits",
+          "description": "Limit RFPs to certain number per year or over $5K threshold",
+          "ideal": "Board may request up to three written estimates for expenditures over $5,000. Additional RFPs charged separately."
+        },
+        {
+          "id": "profit_bank_limits",
+          "name": "Bank Account Limits",
+          "description": "Limit bank accounts included in base fee",
+          "ideal": "Base fee covers a defined number of bank accounts. Additional accounts incur extra fees per Exhibit A."
+        },
+        {
+          "id": "profit_onboarding",
+          "name": "Onboarding/Offboarding Fees",
+          "description": "Onboarding and offboarding procedures and associated fees",
+          "ideal": "Community onboarding and offboarding processes clearly defined with associated fees in Exhibit A."
+        },
+        {
+          "id": "profit_annual_increase",
+          "name": "Annual Fee Increase",
+          "description": "Language for annual management fee increases",
+          "ideal": "Management fee shall increase at a minimum rate of 5% on subsequent terms, tied to budget approval cycle."
+        },
+        {
+          "id": "profit_addendum_services",
+          "name": "Additional Service Revenue",
+          "description": "Ability to earn revenue from additional services beyond base management",
+          "ideal": "Manager permitted to render insurance, real estate services, and other affiliated services to individual owners."
+        }
+      ]
+    },
+    "Empowerment": {
+      "weight": 0.37,
+      "description": "How well the agreement supports expectation-setting, clearly defined services, and manager enablement in carrying out responsibilities.",
+      "criteria": [
+        {
+          "id": "empower_3rd_party",
+          "name": "Third-Party Vendor Outsourcing",
+          "description": "Ability to use 3rd party vendors for RFPs, insurance verification, collections",
+          "ideal": "Independent third parties may be used for proposals, vendor qualification/insurance verification, and collections at association expense."
+        },
+        {
+          "id": "empower_meetings",
+          "name": "Meeting Parameters",
+          "description": "Clear limits on meeting length, frequency, days, and minutes responsibility",
+          "ideal": "Specific number of meetings included in agreement. Additional meetings charged per Exhibit A. Board responsible for recording minutes."
+        },
+        {
+          "id": "empower_financial_reports",
+          "name": "Financial Statement Expectations",
+          "description": "Set day-of-month threshold for financial statements; no special reports unless paying",
+          "ideal": "Financial statements furnished within a set number of days after month-end. No special reports without additional compensation."
+        },
+        {
+          "id": "empower_spending_authority",
+          "name": "Spending Authority",
+          "description": "Expense limit (e.g., $2,500) for manager spending authority",
+          "ideal": "Manager has authority to spend up to $2,500 without prior Board approval for routine maintenance and emergencies."
+        },
+        {
+          "id": "empower_epay",
+          "name": "Electronic Payment Capability",
+          "description": "Can pay bills electronically or e-pay",
+          "ideal": "Manager authorized to effect automatic payments for taxes, insurance, compensation, payroll, utilities, and emergencies."
+        },
+        {
+          "id": "empower_owner_relationship",
+          "name": "Manager-Owner Relationship",
+          "description": "Language letting manager work directly with owner if maintaining property",
+          "ideal": "Manager has no obligation to individual owners but may communicate directly regarding maintenance of individually-owned property when applicable."
+        },
+        {
+          "id": "empower_no_mediation",
+          "name": "No Dispute Mediation",
+          "description": "No responsibility to mediate owner-to-owner or tenant disputes",
+          "ideal": "Manager has no responsibility to mediate differences between owners, tenants, or between owners and the Board."
+        },
+        {
+          "id": "empower_single_contact",
+          "name": "Single Point of Contact",
+          "description": "Board appoints single point of contact for manager",
+          "ideal": "Board shall appoint a single point of contact for management to ensure efficient communication."
+        }
+      ]
+    },
+    "Risk Transference": {
+      "weight": 0.33,
+      "description": "Provisions for engagement with professional third parties, adequacy of indemnity clauses, and protection from liability.",
+      "criteria": [
+        {
+          "id": "risk_common_area",
+          "name": "Common Area Liability",
+          "description": "Not liable for identifying risks or exposure in common areas",
+          "ideal": "Manager performs compliance inspections but is not liable for identifying all risks or exposure in common areas."
+        },
+        {
+          "id": "risk_records",
+          "name": "Records Liability",
+          "description": "Not liable for knowing when a house sold unless notified in writing",
+          "ideal": "Manager maintains records of ownership provided changes are communicated in writing. Not liable for unreported changes."
+        },
+        {
+          "id": "risk_collections",
+          "name": "Collections - Not a Debt Collector",
+          "description": "Manager is not a debt collector; uses third-party collection services",
+          "ideal": "Manager informs association legal counsel or third-party collection service for delinquent accounts. Manager is not a debt collector."
+        },
+        {
+          "id": "risk_budget_reserves",
+          "name": "Budget/Reserve Funding",
+          "description": "Reserve funding adequacy is Board responsibility",
+          "ideal": "Manager indemnified against losses relating to Board's decision to fund reserve levels. Board responsible for adequate reserve funding."
+        },
+        {
+          "id": "risk_fdic",
+          "name": "No FDIC Guarantee Language",
+          "description": "Do not state FDIC insured in bank account language",
+          "ideal": "Bank account language does not guarantee FDIC insurance coverage. Manager is not a financial advisor."
+        },
+        {
+          "id": "risk_earning_credit",
+          "name": "Earning Credit Disclosure",
+          "description": "Disclosure about earning credits on association accounts",
+          "ideal": "Clear disclosure about any earning credits or interest earned on association funds held by manager."
+        },
+        {
+          "id": "risk_security",
+          "name": "Security Disclaimer",
+          "description": "Security obligation and responsibility disclosure",
+          "ideal": "Obligation to provide security is solely the Board's responsibility. Manager makes no representations regarding security adequacy."
+        },
+        {
+          "id": "risk_insurance",
+          "name": "Insurance Coverage",
+          "description": "All types, amounts, and funds transfer insurance specified",
+          "ideal": "Association carries general liability, property coverage, D&O, fidelity bond, and workers comp. Manager carries fidelity bond and E&O coverage."
+        },
+        {
+          "id": "risk_indemnification",
+          "name": "Indemnification",
+          "description": "Ability to have all costs covered including management fee and choice of counsel",
+          "ideal": "Association defends and indemnifies Manager from all claims arising from association operations. Manager indemnifies association for willful misconduct only."
+        },
+        {
+          "id": "risk_liability_cap",
+          "name": "Liability Cap",
+          "description": "Manager only liable for willful misconduct; limits liability to 6 months fees",
+          "ideal": "Manager liability limited to willful misconduct or gross negligence, capped at 6 months of management fees."
+        }
+      ]
+    },
+    "Board Responsibilities": {
+      "weight": 0.18,
+      "description": "Clarity of Board member roles, conduct expectations, and alignment with the manager relationship.",
+      "criteria": [
+        {
+          "id": "board_lawful_acts",
+          "name": "Lawful Acts",
+          "description": "Board members comply with governing documents and state law",
+          "ideal": "All Board members' actions will comply with governing documents and state law."
+        },
+        {
+          "id": "board_conduct",
+          "name": "Standards of Conduct",
+          "description": "Directors conduct above reproach, avoid appearance of impropriety",
+          "ideal": "Directors' conduct should be above reproach and avoid the appearance of impropriety."
+        },
+        {
+          "id": "board_respect",
+          "name": "Mutual Respect",
+          "description": "Directors and management address each other with respect",
+          "ideal": "Directors and management address each other, owners, staff, and vendors with respect even in disagreement."
+        },
+        {
+          "id": "board_roberts_rules",
+          "name": "Roberts Rules of Order",
+          "description": "Meetings conducted per Roberts Rules",
+          "ideal": "Directors conduct all meetings in accordance with Roberts Rules of Order."
+        },
+        {
+          "id": "board_confidentiality",
+          "name": "Confidentiality",
+          "description": "Directors maintain confidentiality on sensitive association information",
+          "ideal": "Directors agree to maintain confidentiality on all sensitive association information including assessments and legal advice."
+        },
+        {
+          "id": "board_training",
+          "name": "Board Training",
+          "description": "Annual training on responsibilities and applicable laws",
+          "ideal": "Board attends annual training on responsibilities, applicable state laws, and leadership."
+        },
+        {
+          "id": "board_attendance",
+          "name": "Meeting Attendance",
+          "description": "Board agrees to attend scheduled meetings",
+          "ideal": "Board agrees to attend scheduled meetings unless proper notice of absence is provided."
+        },
+        {
+          "id": "board_reserve_funding",
+          "name": "Adequate Reserve Funding",
+          "description": "Set assessments to adequately fund reserves",
+          "ideal": "Board sets assessments to adequately fund reserves and maintain community to established standards."
+        },
+        {
+          "id": "board_manager_termination_right",
+          "name": "Manager Right to Terminate for Board Misconduct",
+          "description": "Manager can terminate or assess charges if Board members are abusive or non-compliant",
+          "ideal": "Manager reserves the right to terminate or assess charges if association members or Board are abusive, threatening, or non-compliant."
+        }
+      ]
+    },
+    "Maximize Business Value": {
+      "weight": 0.39,
+      "description": "Agreement's ability to support transferability of rights and obligations to increase company's long-term business value.",
+      "criteria": [
+        {
+          "id": "value_termination_cause",
+          "name": "Termination Provisions",
+          "description": "Termination for cause or longer term notice period",
+          "ideal": "Agreement may be terminated after initial term with cause by providing 60 days notice. Clear definition of cause."
+        },
+        {
+          "id": "value_term_length",
+          "name": "Term Length",
+          "description": "Term for more than 1 year",
+          "ideal": "Initial term of 2+ years with automatic renewal provisions."
+        },
+        {
+          "id": "value_electronic_fee",
+          "name": "Electronic Fee Payment",
+          "description": "Language letting manager pay their fee electronically",
+          "ideal": "Manager's monthly compensation included in automatic payment authority."
+        },
+        {
+          "id": "value_non_compete",
+          "name": "Non-Compete Clause",
+          "description": "Non-compete/non-interference provision and language",
+          "ideal": "Association agrees not to hire or solicit manager's employees for 36 months after termination. Non-interference with manager's business."
+        },
+        {
+          "id": "value_assignment",
+          "name": "Assignment of Rights",
+          "description": "Manager can assign rights and obligations (supports business sale)",
+          "ideal": "Manager may assign rights and obligations under this agreement. Upon assignment and notice, association looks solely to assignee (novation)."
+        },
+        {
+          "id": "value_representations_survive",
+          "name": "Representations Survive Termination",
+          "description": "Warranties and representations survive agreement termination",
+          "ideal": "All representations and warranties survive termination. Provisions that by nature should survive termination will survive."
+        }
+      ]
+    }
+  }
+}
