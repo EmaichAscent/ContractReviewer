@@ -16,6 +16,9 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p uploads results data data/reference_contracts
 
+# Copy default data files to a seed directory (volume mounts over /app/data)
+RUN cp -r data /app/data_defaults
+
 EXPOSE ${PORT:-5000}
 
-CMD gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 1 --threads 2 --timeout 600 app:app
+CMD python seed_data.py && gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 1 --threads 2 --timeout 600 app:app
