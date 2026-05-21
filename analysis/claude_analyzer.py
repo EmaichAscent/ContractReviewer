@@ -1,11 +1,41 @@
 """Core analysis engine using Claude API."""
 
+import base64
 import json
+import os
+
 import anthropic
 
 import config
 from analysis.scoring_criteria import load_criteria, calculate_category_score
 from parsing.docx_parser import get_full_text
+
+
+def _build_pdf_content_blocks(pdf_paths, log_fn=None):
+    """Convert PDF paths into Anthropic document content blocks for multimodal input.
+
+    Returns a list of content blocks. PDFs that can't be read are skipped (logged).
+    """
+    blocks = []
+    for path in (pdf_paths or []):
+        try:
+            with open(path, "rb") as f:
+                data = base64.b64encode(f.read()).decode("utf-8")
+            blocks.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": data,
+                },
+            })
+            if log_fn:
+                size_kb = os.path.getsize(path) / 1024
+                log_fn(f"Attached PDF for direct analysis: {os.path.basename(path)} ({size_kb:.0f} KB)")
+        except Exception as e:
+            if log_fn:
+                log_fn(f"Could not attach PDF {os.path.basename(path)}: {e}")
+    return blocks
 
 
 def load_prompts():
@@ -35,16 +65,21 @@ def load_prompts():
     return merged
 
 
-def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None):
+def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None, pdf_attachments=None):
     """Analyze a contract against the ideal template and scoring criteria.
 
     Args:
-        contract_text: full text of the contract to review
+        contract_text: full text of the contract to review (may be empty if PDF
+            text extraction failed — in that case pdf_attachments carries the
+            authoritative content)
         ideal_template_text: full text of the ideal template agreement
         statutes_context: formatted string of relevant statutes
         jurisdiction: dict with state info from jurisdiction detector
         model: Claude model ID to use (overrides config default)
         log_fn: optional callback function(message) for progress logging
+        pdf_attachments: optional list of paths to PDF files. When provided, the
+            PDFs are sent to Claude as multimodal document content (handles
+            scanned/OCR'd PDFs that pdfplumber can't extract).
 
     Returns:
         dict with analysis results including scores, explanations, and revisions
@@ -68,10 +103,30 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
         if jurisdiction.get("statutes_mentioned"):
             jurisdiction_text += f"\nStatutes referenced in contract: {', '.join(jurisdiction['statutes_mentioned'])}"
 
+    # Build contract section. If PDFs are attached, point the LLM at them as
+    # the authoritative source. Extracted text (if any) is still included since
+    # it helps with exact quoting in the response.
+    pdf_blocks = _build_pdf_content_blocks(pdf_attachments, log_fn=log)
+    if pdf_blocks:
+        if contract_text.strip():
+            contract_section = (
+                "The contract is provided as attached PDF document(s) — use those "
+                "as the authoritative source. A best-effort text extraction is also "
+                "included below to help with exact quoting:\n\n" + contract_text
+            )
+        else:
+            contract_section = (
+                "The contract is provided as attached PDF document(s). Direct text "
+                "extraction failed (likely a scanned or non-standard PDF), so read "
+                "the attached PDF(s) carefully as the authoritative source."
+            )
+    else:
+        contract_section = contract_text
+
     user_prompt = f"""{analysis_prompt_template}
 
 ## CONTRACT UNDER REVIEW
-{contract_text}
+{contract_section}
 
 ## IDEAL TEMPLATE AGREEMENT
 {ideal_template_text}
@@ -94,15 +149,18 @@ Please analyze the contract and return your complete analysis as JSON."""
     num_criteria = sum(len(c["criteria"]) for c in criteria_data["categories"].values())
 
     log(f"Preparing analysis prompt: {contract_words:,} contract words + {template_words:,} template words")
+    if pdf_blocks:
+        log(f"Sending {len(pdf_blocks)} PDF(s) directly to {model} for multimodal analysis")
     log(f"Scoring against {num_criteria} criteria across {len(criteria_data['categories'])} categories")
     log(f"Sending {total_prompt_words:,} words to {model} (this may take 2-5 minutes)...")
 
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    message_content = pdf_blocks + [{"type": "text", "text": user_prompt}] if pdf_blocks else user_prompt
     response = client.messages.create(
         model=model,
         max_tokens=config.MAX_TOKENS,
         system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+        messages=[{"role": "user", "content": message_content}],
     )
 
     response_text = response.content[0].text
@@ -137,7 +195,8 @@ Please analyze the contract and return your complete analysis as JSON."""
         log("All criteria scored well — skipping revision request")
 
     revisions, rev_usage = _get_revisions(
-        client, system_prompt, prompts, contract_text, analysis, model, log_fn=log_fn
+        client, system_prompt, prompts, contract_text, analysis, model,
+        log_fn=log_fn, pdf_attachments=pdf_attachments,
     )
     analysis["revisions"] = revisions
 
@@ -154,7 +213,7 @@ Please analyze the contract and return your complete analysis as JSON."""
     return analysis
 
 
-def _get_revisions(client, system_prompt, prompts, contract_text, analysis, model=None, log_fn=None):
+def _get_revisions(client, system_prompt, prompts, contract_text, analysis, model=None, log_fn=None, pdf_attachments=None):
     """Get specific text revisions for track changes."""
     def log(msg):
         if log_fn:
@@ -179,10 +238,20 @@ def _get_revisions(client, system_prompt, prompts, contract_text, analysis, mode
     if not weak_areas:
         return [], {"input_tokens": 0, "output_tokens": 0}
 
+    pdf_blocks = _build_pdf_content_blocks(pdf_attachments)
+    if pdf_blocks:
+        contract_section = (
+            "The contract is in the attached PDF document(s) — use those as the "
+            "authoritative source for exact verbatim quoting. Text extraction is "
+            "also included below:\n\n" + (contract_text or "(text extraction was empty)")
+        )
+    else:
+        contract_section = contract_text
+
     user_prompt = f"""{revision_prompt}
 
 ## CONTRACT TEXT
-{contract_text}
+{contract_section}
 
 ## AREAS NEEDING REVISION
 {json.dumps(weak_areas, indent=2)}
@@ -191,11 +260,12 @@ Generate specific, actionable text revisions as a JSON array."""
 
     log(f"Sending revision request to {model} for {len(weak_areas)} weak areas...")
 
+    message_content = pdf_blocks + [{"type": "text", "text": user_prompt}] if pdf_blocks else user_prompt
     response = client.messages.create(
         model=model,
         max_tokens=config.MAX_TOKENS,
         system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+        messages=[{"role": "user", "content": message_content}],
     )
 
     revisions = _extract_json_array(response.content[0].text)

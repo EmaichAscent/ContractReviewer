@@ -681,6 +681,7 @@ def _run_analysis(job_id):
         all_text_parts = []
         all_paragraphs = []
         primary_docx_path = None  # For track changes markup
+        pdf_attachments = []  # PDFs sent to Claude as multimodal documents
 
         parse_errors = []
         for i, upload_path in enumerate(upload_paths):
@@ -694,6 +695,12 @@ def _run_analysis(job_id):
                 if file_type == "pdf":
                     text = get_full_text_pdf(upload_path)
                     paragraphs = parse_pdf(upload_path)
+                    # Always send PDFs as multimodal documents — pdfplumber
+                    # silently returns empty text on scanned/OCR'd PDFs, which
+                    # would make the LLM think no contract was provided.
+                    pdf_attachments.append(upload_path)
+                    if len(text.strip()) < 200:
+                        _log_activity(job_id, f"WARNING: pdfplumber extracted only {len(text.strip())} chars from {fname} — using direct PDF analysis as the source of truth")
                 elif file_type == "doc":
                     text = get_full_text_doc(upload_path)
                     paragraphs = parse_doc(upload_path)
@@ -812,7 +819,31 @@ def _run_analysis(job_id):
             jurisdiction=jurisdiction,
             model=selected_model,
             log_fn=lambda msg: _log_activity(job_id, msg),
+            pdf_attachments=pdf_attachments,
         )
+
+        # If text-based jurisdiction detection failed but the LLM identified a
+        # state from the attached PDF, adopt the LLM's value so the results
+        # page and statute compliance can use it on follow-up runs.
+        llm_juris = analysis.get("jurisdiction") if isinstance(analysis.get("jurisdiction"), dict) else None
+        if llm_juris and llm_juris.get("state") and (not jurisdiction.get("state") or jurisdiction.get("state") in ("Unknown", "")):
+            from statutes.jurisdiction_detector import US_STATES
+            state_name = (llm_juris.get("state") or "").strip()
+            abbrev = ""
+            for name, ab in US_STATES.items():
+                if name.lower() == state_name.lower() or ab == state_name.upper():
+                    abbrev = ab
+                    state_name = name.title()
+                    break
+            if state_name:
+                jurisdiction = {
+                    "state": state_name,
+                    "state_abbrev": abbrev,
+                    "statutes_mentioned": llm_juris.get("statutes_referenced", []),
+                    "confidence": "llm_extracted",
+                }
+                job["jurisdiction"] = jurisdiction
+                _log_activity(job_id, f"Jurisdiction recovered from PDF analysis: {state_name} ({abbrev})")
         usage = analysis.get("usage", {})
         if usage:
             total_in = usage.get("total_input_tokens", 0)
