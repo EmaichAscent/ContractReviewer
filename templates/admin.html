@@ -47,6 +47,16 @@
                 <p class="help-text">How to generate specific text revisions for track changes.</p>
                 <textarea name="revision_prompt" id="revision_prompt" rows="6">{{ prompts.revision_prompt }}</textarea>
             </div>
+            <div class="form-group">
+                <label for="template_revision_system_prompt">Template Revision — System Prompt</label>
+                <p class="help-text">Sets the AI's role when building a Client Template Edition (revised master template with track changes).</p>
+                <textarea name="template_revision_system_prompt" id="template_revision_system_prompt" rows="5">{{ prompts.template_revision_system_prompt }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="template_revision_prompt">Template Revision Prompt</label>
+                <p class="help-text">Instructions for producing revisions to the master template, with source/purpose/statute metadata for Word comments. The template text and analysis context are appended automatically.</p>
+                <textarea name="template_revision_prompt" id="template_revision_prompt" rows="14">{{ prompts.template_revision_prompt }}</textarea>
+            </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Save Prompts</button>
                 <a href="/admin/reset" class="btn btn-secondary" onclick="return confirm('Reset all prompts to defaults?')">Reset to Defaults</a>

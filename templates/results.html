@@ -16,11 +16,58 @@
         {% endif %}
     </div>
 
+    <!-- Scorecard (always available) -->
     <div class="download-buttons">
-        <a href="/download/{{ job_id }}/executive_summary" class="btn btn-primary">Executive Summary (PDF)</a>
         <a href="/download/{{ job_id }}/scorecard_pdf" class="btn btn-primary">Full Scorecard (PDF)</a>
         <a href="/download/{{ job_id }}/scorecard" class="btn btn-secondary">Full Scorecard (Word)</a>
-        <a href="/download/{{ job_id }}/marked" class="btn btn-secondary">Marked-Up Contract</a>
+    </div>
+
+    <!-- Optional artifacts: generate on demand -->
+    <div class="optional-artifacts">
+        <h2>Additional Outputs</h2>
+        <p class="help-text">These artifacts are generated only when requested.</p>
+
+        <div class="artifact-row" data-kind="exec-summary" data-status="{{ artifact_states['exec-summary'].status }}">
+            <div class="artifact-info">
+                <strong>Executive Summary (PDF)</strong>
+                <p class="help-text">Structured summary with risk rating, top priorities, statutory compliance, and next steps.</p>
+            </div>
+            <div class="artifact-controls">
+                <button class="btn btn-primary artifact-generate" data-kind="exec-summary">Generate</button>
+                <span class="artifact-spinner" hidden>Generating…</span>
+                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/executive_summary" hidden>Download</a>
+                <span class="artifact-error" hidden></span>
+            </div>
+        </div>
+
+        <div class="artifact-row" data-kind="marked" data-status="{{ artifact_states['marked'].status }}">
+            <div class="artifact-info">
+                <strong>Marked Client Contract (Word)</strong>
+                <p class="help-text">Client contract with track changes showing every suggested revision.</p>
+                {% if not has_primary_docx %}
+                <p class="help-text warn-text">Original contract was a PDF — track changes cannot be applied.</p>
+                {% endif %}
+            </div>
+            <div class="artifact-controls">
+                <button class="btn btn-primary artifact-generate" data-kind="marked" {% if not has_primary_docx %}disabled{% endif %}>Generate</button>
+                <span class="artifact-spinner" hidden>Generating…</span>
+                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/marked" hidden>Download</a>
+                <span class="artifact-error" hidden></span>
+            </div>
+        </div>
+
+        <div class="artifact-row" data-kind="template-edition" data-status="{{ artifact_states['template-edition'].status }}">
+            <div class="artifact-info">
+                <strong>Client Template Edition (Word)</strong>
+                <p class="help-text">Revised master template — imports favorable client language and statutory provisions as track changes with Word comments. Takes 1-3 minutes.</p>
+            </div>
+            <div class="artifact-controls">
+                <button class="btn btn-primary artifact-generate" data-kind="template-edition">Build</button>
+                <span class="artifact-spinner" hidden>Generating… (1-3 min)</span>
+                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/template_edition" hidden>Download</a>
+                <span class="artifact-error" hidden></span>
+            </div>
+        </div>
     </div>
 
     <div class="overall-score">
@@ -87,6 +134,34 @@
     </div>
     {% endfor %}
 
+    {% if gap_analysis %}
+    <div class="gap-analysis-section">
+        <h2>Gap Analysis — Client Language Worth Importing Into the Template</h2>
+        <p class="help-text">Language in this client's contract that strengthens manager protection but is not present in the firm's master template.</p>
+        <table class="gap-analysis-table">
+            <thead>
+                <tr>
+                    <th style="width:55%">Client Contract Language</th>
+                    <th style="width:25%">Template Section</th>
+                    <th style="width:20%">Why Import</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for gap in gap_analysis %}
+                <tr>
+                    <td>
+                        {% if gap.client_section %}<strong>{{ gap.client_section }}:</strong> {% endif %}
+                        "{{ gap.client_quote }}"
+                    </td>
+                    <td>{{ gap.template_section or "—" }}</td>
+                    <td>{{ gap.rationale or "—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
     {% if statute_concerns %}
     <div class="statute-section">
         <h2>Statutory Compliance Notes</h2>
@@ -105,4 +180,73 @@
     </div>
     {% endif %}
 </div>
+
+<script>
+(function() {
+    const JOB_ID = "{{ job_id }}";
+
+    function setRow(row, status, error) {
+        const generateBtn = row.querySelector(".artifact-generate");
+        const spinner = row.querySelector(".artifact-spinner");
+        const download = row.querySelector(".artifact-download");
+        const errorEl = row.querySelector(".artifact-error");
+
+        generateBtn.hidden = status !== "not_started";
+        spinner.hidden = status !== "generating";
+        download.hidden = status !== "ready";
+        errorEl.hidden = status !== "error";
+
+        if (status === "error") {
+            errorEl.textContent = "Error: " + (error || "generation failed") + " ";
+            const retry = document.createElement("button");
+            retry.className = "btn btn-small btn-secondary";
+            retry.textContent = "Retry";
+            retry.addEventListener("click", function() { start(row); });
+            errorEl.appendChild(retry);
+        }
+        row.dataset.status = status;
+    }
+
+    function poll(row) {
+        const kind = row.dataset.kind;
+        fetch(`/generate/${JOB_ID}/${kind}/status`)
+            .then(r => r.json())
+            .then(data => {
+                setRow(row, data.status, data.error);
+                if (data.status === "generating") {
+                    setTimeout(() => poll(row), 3000);
+                }
+            })
+            .catch(err => {
+                setRow(row, "error", String(err));
+            });
+    }
+
+    function start(row) {
+        const kind = row.dataset.kind;
+        setRow(row, "generating");
+        fetch(`/generate/${JOB_ID}/${kind}`, { method: "POST" })
+            .then(r => r.json())
+            .then(data => {
+                setRow(row, data.status, data.error);
+                if (data.status === "generating") {
+                    setTimeout(() => poll(row), 2000);
+                }
+            })
+            .catch(err => {
+                setRow(row, "error", String(err));
+            });
+    }
+
+    document.querySelectorAll(".artifact-row").forEach(row => {
+        const initial = row.dataset.status;
+        setRow(row, initial);
+        if (initial === "generating") {
+            poll(row);
+        }
+        const btn = row.querySelector(".artifact-generate");
+        btn.addEventListener("click", () => start(row));
+    });
+})();
+</script>
 {% endblock %}

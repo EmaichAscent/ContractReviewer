@@ -35,6 +35,7 @@ from output.scorecard_generator import generate_scorecard
 from output.scorecard_pdf import generate_scorecard_pdf
 from output.executive_summary_pdf import generate_executive_summary_pdf
 from output.trackchanges import apply_track_changes
+from output.template_revision import generate_client_template_edition
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
@@ -42,6 +43,16 @@ app.secret_key = config.SECRET_KEY
 # Job tracking - persisted to disk to survive Flask debug reloads
 jobs = {}
 JOBS_STATE_FILE = os.path.join(config.RESULTS_FOLDER, "_jobs_state.json")
+
+# On-demand artifact generation tracking. State lives partly on disk (the file
+# itself) and partly in this dict (in-flight + error states). Keys: f"{job_id}:{kind}".
+generations = {}
+
+ARTIFACT_FILES = {
+    "exec-summary": "executive_summary.pdf",
+    "marked": "marked_contract.docx",
+    "template-edition": "client_template_edition.docx",
+}
 
 
 def _persist_job(job_id):
@@ -57,6 +68,7 @@ def _persist_job(job_id):
         "status_message": job.get("status_message"),
         "error": job.get("error"),
         "has_results": bool(job.get("results")),
+        "primary_docx_filename": job.get("primary_docx_filename"),
     }
     job_state_path = os.path.join(config.RESULTS_FOLDER, job_id, "job_state.json")
     try:
@@ -77,10 +89,19 @@ def _recover_job(job_id):
             with open(analysis_path) as f:
                 results = json.load(f)
             client_name = "Unknown"
+            primary_docx_filename = None
             if os.path.exists(job_state_path):
                 with open(job_state_path) as f:
                     state = json.load(f)
                 client_name = state.get("client_name", "Unknown")
+                primary_docx_filename = state.get("primary_docx_filename")
+            # Fall back to the analysis file's mtime if no stored date — keeps
+            # old jobs (predating job_state.json) renderable.
+            try:
+                mtime = os.path.getmtime(analysis_path)
+                date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                date_str = ""
             jobs[job_id] = {
                 "id": job_id,
                 "client_name": client_name,
@@ -88,6 +109,9 @@ def _recover_job(job_id):
                 "progress": 100,
                 "status_message": "Review complete!",
                 "results": results,
+                "primary_docx_filename": primary_docx_filename,
+                "date": date_str,
+                "jurisdiction": results.get("jurisdiction") if isinstance(results.get("jurisdiction"), dict) else None,
             }
             return jobs[job_id]
         except Exception:
@@ -229,8 +253,146 @@ def results(job_id):
         score_rating=score_rating,
         statute_concerns=analysis.get("statute_concerns", []),
         recommendation=analysis.get("overall_recommendation", ""),
+        gap_analysis=analysis.get("gap_analysis", []),
         usage=usage,
+        artifact_states={
+            kind: _artifact_status(job_id, kind) for kind in ARTIFACT_FILES
+        },
+        has_primary_docx=bool(job.get("primary_docx_filename")),
     )
+
+
+def _artifact_status(job_id, kind):
+    """Return current status for an on-demand artifact.
+
+    States: 'not_started' | 'generating' | 'ready' | 'error'.
+    A file on disk implies 'ready' (handles restarts and old jobs that pre-date
+    on-demand generation).
+    """
+    filename = ARTIFACT_FILES.get(kind)
+    if not filename:
+        return {"status": "error", "error": "Unknown artifact type"}
+
+    file_path = os.path.join(config.RESULTS_FOLDER, job_id, filename)
+    if os.path.exists(file_path):
+        return {"status": "ready"}
+
+    state = generations.get(f"{job_id}:{kind}")
+    if state:
+        return state
+    return {"status": "not_started"}
+
+
+def _set_artifact_state(job_id, kind, status, **extra):
+    generations[f"{job_id}:{kind}"] = {"status": status, **extra}
+
+
+def _generate_exec_summary(job_id):
+    job = jobs.get(job_id) or _recover_job(job_id)
+    if not job or not job.get("results"):
+        _set_artifact_state(job_id, "exec-summary", "error", error="Analysis not available")
+        return
+    try:
+        job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
+        out_path = os.path.join(job_dir, "executive_summary.pdf")
+        generate_executive_summary_pdf(
+            job["results"], job["client_name"], out_path, job.get("jurisdiction")
+        )
+        _set_artifact_state(job_id, "exec-summary", "ready")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        _set_artifact_state(job_id, "exec-summary", "error", error=str(e))
+
+
+def _generate_marked_contract(job_id):
+    job = jobs.get(job_id) or _recover_job(job_id)
+    if not job or not job.get("results"):
+        _set_artifact_state(job_id, "marked", "error", error="Analysis not available")
+        return
+    try:
+        job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
+        primary_filename = job.get("primary_docx_filename")
+        if not primary_filename:
+            _set_artifact_state(job_id, "marked", "error",
+                                error="No .docx contract was uploaded — track changes cannot be applied to PDFs.")
+            return
+        primary_path = os.path.join(job_dir, primary_filename)
+        if not os.path.exists(primary_path):
+            _set_artifact_state(job_id, "marked", "error", error="Original contract file not found")
+            return
+        out_path = os.path.join(job_dir, "marked_contract.docx")
+        revisions = job["results"].get("revisions", [])
+        if revisions:
+            apply_track_changes(primary_path, out_path, revisions)
+        else:
+            import shutil
+            shutil.copy2(primary_path, out_path)
+        _set_artifact_state(job_id, "marked", "ready")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        _set_artifact_state(job_id, "marked", "error", error=str(e))
+
+
+def _generate_template_edition(job_id):
+    """Build the Client Template Edition — a revised copy of the master template
+    with track changes and Word comments sourced from the client contract analysis.
+    This runs a second, focused LLM call."""
+    job = jobs.get(job_id) or _recover_job(job_id)
+    if not job or not job.get("results"):
+        _set_artifact_state(job_id, "template-edition", "error", error="Analysis not available")
+        return
+    try:
+        job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
+        out_path = os.path.join(job_dir, "client_template_edition.docx")
+        settings = _load_settings()
+        model = settings.get("model", config.CLAUDE_MODEL)
+        generate_client_template_edition(
+            template_path=config.IDEAL_TEMPLATE_PATH,
+            output_path=out_path,
+            client_name=job["client_name"],
+            analysis=job["results"],
+            jurisdiction=job.get("jurisdiction"),
+            model=model,
+        )
+        _set_artifact_state(job_id, "template-edition", "ready")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        _set_artifact_state(job_id, "template-edition", "error", error=str(e))
+
+
+_ARTIFACT_GENERATORS = {
+    "exec-summary": _generate_exec_summary,
+    "marked": _generate_marked_contract,
+    "template-edition": _generate_template_edition,
+}
+
+
+@app.route("/generate/<job_id>/<kind>", methods=["POST"])
+def generate_artifact(job_id, kind):
+    if kind not in _ARTIFACT_GENERATORS:
+        return jsonify({"status": "error", "error": "Unknown artifact type"}), 400
+
+    job = jobs.get(job_id) or _recover_job(job_id)
+    if not job:
+        return jsonify({"status": "error", "error": "Job not found"}), 404
+
+    current = _artifact_status(job_id, kind)
+    if current["status"] in ("ready", "generating"):
+        return jsonify(current)
+
+    _set_artifact_state(job_id, kind, "generating")
+    thread = threading.Thread(target=_ARTIFACT_GENERATORS[kind], args=(job_id,))
+    thread.daemon = True
+    thread.start()
+    return jsonify({"status": "generating"})
+
+
+@app.route("/generate/<job_id>/<kind>/status")
+def generate_artifact_status(job_id, kind):
+    return jsonify(_artifact_status(job_id, kind))
 
 
 @app.route("/download/<job_id>/<file_type>")
@@ -250,6 +412,9 @@ def download(job_id, file_type):
     elif file_type == "marked":
         path = os.path.join(job_dir, "marked_contract.docx")
         name = f"Marked Contract - {client}.docx"
+    elif file_type == "template_edition":
+        path = os.path.join(job_dir, "client_template_edition.docx")
+        name = f"Client Template Edition - {client}.docx"
     else:
         flash("Invalid download type.", "error")
         return redirect(url_for("results", job_id=job_id))
@@ -335,6 +500,8 @@ def admin_save():
         "analysis_prompt": request.form.get("analysis_prompt", ""),
         "statute_search_prompt": request.form.get("statute_search_prompt", ""),
         "revision_prompt": request.form.get("revision_prompt", ""),
+        "template_revision_system_prompt": request.form.get("template_revision_system_prompt", ""),
+        "template_revision_prompt": request.form.get("template_revision_prompt", ""),
     }
     os.makedirs(os.path.dirname(config.ADMIN_PROMPTS_PATH), exist_ok=True)
     with open(config.ADMIN_PROMPTS_PATH, "w") as f:
@@ -656,7 +823,9 @@ def _run_analysis(job_id):
         _log_activity(job_id, f"Generated {num_revisions} suggested revisions for track changes")
         _update_job(job_id, 80, "Analysis complete. Generating reports...")
 
-        # Step 7: Generate scorecard (docx + pdf)
+        # Step 7: Generate scorecard (docx + pdf) — the only auto-generated artifact.
+        # Executive summary, marked-up contract, and client template edition are
+        # generated on demand from the results page.
         _update_job(job_id, 85, "Generating scorecard...")
         job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
         scorecard_path = os.path.join(job_dir, "scorecard.docx")
@@ -667,32 +836,10 @@ def _run_analysis(job_id):
         except Exception as e:
             print(f"PDF generation error: {e}")
 
-        # Generate executive summary PDF
-        exec_summary_path = os.path.join(job_dir, "executive_summary.pdf")
-        try:
-            generate_executive_summary_pdf(analysis, job["client_name"], exec_summary_path, jurisdiction)
-            _log_activity(job_id, "Executive summary PDF generated")
-        except Exception as e:
-            print(f"Executive summary PDF error: {e}")
-
-        # Step 8: Generate marked-up contract
-        _update_job(job_id, 90, "Generating marked-up contract...")
-        marked_path = os.path.join(job_dir, "marked_contract.docx")
-        revisions = analysis.get("revisions", [])
-        if revisions and primary_docx_path:
-            _log_activity(job_id, f"Applying {len(revisions)} track changes to contract...")
-            try:
-                apply_track_changes(primary_docx_path, marked_path, revisions)
-                _log_activity(job_id, "Track changes applied successfully")
-            except Exception as e:
-                print(f"Track changes error: {e}")
-                import traceback
-                traceback.print_exc()
-                import shutil
-                shutil.copy2(primary_docx_path, marked_path)
-        elif primary_docx_path:
-            import shutil
-            shutil.copy2(primary_docx_path, marked_path)
+        # Remember which uploaded file is the primary .docx so on-demand artifact
+        # generation (marked contract, template edition) can find it later.
+        if primary_docx_path:
+            job["primary_docx_filename"] = os.path.basename(primary_docx_path)
 
         # Save analysis results
         results_path = os.path.join(job_dir, "analysis.json")
@@ -769,17 +916,15 @@ def _update_job(job_id, progress, message):
 
 
 def _load_prompts():
-    """Load prompts from file."""
-    try:
-        with open(config.ADMIN_PROMPTS_PATH, "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {
-            "system_prompt": "",
-            "analysis_prompt": "",
-            "statute_search_prompt": "",
-            "revision_prompt": "",
-        }
+    """Load prompts from file, with packaged defaults as a fallback so the admin
+    UI shows the effective values even when prompts.json predates new keys."""
+    from analysis.claude_analyzer import load_prompts as _load_merged
+    merged = _load_merged()
+    for k in ("system_prompt", "analysis_prompt", "statute_search_prompt",
+              "revision_prompt", "template_revision_system_prompt",
+              "template_revision_prompt"):
+        merged.setdefault(k, "")
+    return merged
 
 
 def _load_settings():

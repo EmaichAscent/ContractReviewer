@@ -426,3 +426,82 @@ body {
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 .recommendation-section h2, .statute-section h2 { color: #003366; margin-bottom: 0.75rem; }
+
+/* --- On-demand artifact generation (results page) --- */
+.optional-artifacts {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.optional-artifacts h2 { color: #003366; margin-bottom: 0.25rem; }
+.optional-artifacts .help-text { margin-bottom: 1.25rem; color: #666; }
+
+.artifact-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-top: 1px solid #eee;
+}
+.artifact-row:first-of-type { border-top: none; }
+.artifact-info { flex: 1; min-width: 0; }
+.artifact-info strong { display: block; color: #222; font-size: 1.05rem; }
+.artifact-info .help-text { margin: 0.25rem 0 0 0; font-size: 0.9rem; }
+.artifact-info .warn-text { color: #a85500; }
+
+.artifact-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+.artifact-spinner {
+    color: #666;
+    font-style: italic;
+    font-size: 0.9rem;
+}
+.artifact-error {
+    color: #b00020;
+    font-size: 0.9rem;
+    max-width: 220px;
+}
+.btn-success {
+    background: #2e7d32;
+    color: #fff;
+}
+.btn-success:hover { background: #256528; }
+.btn[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* --- Gap analysis table --- */
+.gap-analysis-section {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.gap-analysis-section h2 { color: #003366; margin-bottom: 0.5rem; }
+.gap-analysis-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.95rem;
+}
+.gap-analysis-table th,
+.gap-analysis-table td {
+    text-align: left;
+    padding: 0.75rem;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+}
+.gap-analysis-table th {
+    background: #f5f7fa;
+    color: #003366;
+    font-weight: 600;
+}

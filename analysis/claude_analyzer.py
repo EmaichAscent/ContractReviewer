@@ -9,12 +9,30 @@ from parsing.docx_parser import get_full_text
 
 
 def load_prompts():
-    """Load admin-configurable prompts."""
+    """Load admin-configurable prompts, falling back to packaged defaults for any
+    missing keys. This lets new prompts (added in code) take effect on existing
+    installs whose prompts.json predates them."""
+    import os
+
+    defaults_path = os.path.join(os.path.dirname(config.ADMIN_PROMPTS_PATH), "prompts_default.json")
+    try:
+        with open(defaults_path, "r") as f:
+            merged = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        merged = {}
+
     try:
         with open(config.ADMIN_PROMPTS_PATH, "r") as f:
-            return json.load(f)
+            user_prompts = json.load(f)
+        # Admin-saved values override defaults, but only when non-empty so that
+        # cleared fields in the admin UI don't blank-out a working default.
+        for k, v in user_prompts.items():
+            if v:
+                merged[k] = v
     except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        pass
+
+    return merged
 
 
 def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None):
