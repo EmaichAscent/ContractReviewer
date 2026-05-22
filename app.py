@@ -36,6 +36,7 @@ from output.scorecard_pdf import generate_scorecard_pdf
 from output.executive_summary_pdf import generate_executive_summary_pdf
 from output.trackchanges import apply_track_changes
 from output.template_revision import generate_client_template_edition
+from output.revisions_document import generate_revisions_document
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
@@ -52,6 +53,7 @@ ARTIFACT_FILES = {
     "exec-summary": "executive_summary.pdf",
     "marked": "marked_contract.docx",
     "template-edition": "client_template_edition.docx",
+    "revisions": "revisions_document.docx",
 }
 
 
@@ -363,10 +365,32 @@ def _generate_template_edition(job_id):
         _set_artifact_state(job_id, "template-edition", "error", error=str(e))
 
 
+def _generate_revisions_document(job_id):
+    """Build the standalone Suggested Contract Revisions .docx. Works for any
+    input format (PDF, .doc, .docx) since it's generated from the analysis JSON
+    rather than the source file."""
+    job = jobs.get(job_id) or _recover_job(job_id)
+    if not job or not job.get("results"):
+        _set_artifact_state(job_id, "revisions", "error", error="Analysis not available")
+        return
+    try:
+        job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
+        out_path = os.path.join(job_dir, "revisions_document.docx")
+        generate_revisions_document(
+            job["results"], job["client_name"], out_path, job.get("jurisdiction")
+        )
+        _set_artifact_state(job_id, "revisions", "ready")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        _set_artifact_state(job_id, "revisions", "error", error=str(e))
+
+
 _ARTIFACT_GENERATORS = {
     "exec-summary": _generate_exec_summary,
     "marked": _generate_marked_contract,
     "template-edition": _generate_template_edition,
+    "revisions": _generate_revisions_document,
 }
 
 
@@ -415,6 +439,9 @@ def download(job_id, file_type):
     elif file_type == "template_edition":
         path = os.path.join(job_dir, "client_template_edition.docx")
         name = f"Client Template Edition - {client}.docx"
+    elif file_type == "revisions":
+        path = os.path.join(job_dir, "revisions_document.docx")
+        name = f"Suggested Revisions - {client}.docx"
     else:
         flash("Invalid download type.", "error")
         return redirect(url_for("results", job_id=job_id))
@@ -676,8 +703,14 @@ def _run_analysis(job_id):
         if not upload_paths:
             raise ValueError("No files to analyze")
 
-        # Step 1: Parse all uploaded documents
-        _update_job(job_id, 5, f"Parsing {len(upload_paths)} document(s)...")
+        # Progress bands — chosen so the bar reflects actual wall time:
+        #   0-12%   parsing + section split (seconds)
+        #   12-15%  jurisdiction detection
+        #   15-20%  statute lookup + template load
+        #   20-75%  LLM analysis (this is the slow phase, streamed live)
+        #   75-85%  revisions LLM call (streamed live)
+        #   85-100% scorecard + pdf generation
+        _update_job(job_id, 3, f"Parsing {len(upload_paths)} document(s)...")
         all_text_parts = []
         all_paragraphs = []
         primary_docx_path = None  # For track changes markup
@@ -686,7 +719,7 @@ def _run_analysis(job_id):
         parse_errors = []
         for i, upload_path in enumerate(upload_paths):
             fname = os.path.basename(upload_path)
-            _update_job(job_id, 5 + (15 * i // len(upload_paths)),
+            _update_job(job_id, 3 + (8 * i // max(1, len(upload_paths))),
                         f"Parsing document {i + 1}/{len(upload_paths)}: {fname}")
 
             try:
@@ -748,20 +781,20 @@ def _run_analysis(job_id):
             raise ValueError(f"Could not read any of the uploaded files.\n{error_detail}")
 
         if parse_errors:
-            _update_job(job_id, 20,
+            _update_job(job_id, 11,
                         f"Parsed {len(all_text_parts)}/{len(upload_paths)} document(s). "
                         f"Skipped: {'; '.join(parse_errors)}")
         else:
-            _update_job(job_id, 20, f"Parsed {len(upload_paths)} document(s) successfully.")
+            _update_job(job_id, 11, f"Parsed {len(upload_paths)} document(s) successfully.")
 
         contract_text = "\n".join(all_text_parts)
 
         # Step 2: Split into sections
         sections = split_into_sections(all_paragraphs)
-        _update_job(job_id, 25, f"Identified {len(sections)} contract sections.")
+        _update_job(job_id, 12, f"Identified {len(sections)} contract sections.")
 
         # Step 3: Detect jurisdiction
-        _update_job(job_id, 30, "Detecting jurisdiction...")
+        _update_job(job_id, 13, "Detecting jurisdiction...")
         if job["state_override"]:
             from statutes.jurisdiction_detector import US_STATES
             state_name = None
@@ -782,10 +815,10 @@ def _run_analysis(job_id):
         state_info = f"{jurisdiction['state']} ({jurisdiction['state_abbrev']})" if jurisdiction.get("state") else "Unknown"
         if jurisdiction.get("statutes_mentioned"):
             _log_activity(job_id, f"Found {len(jurisdiction['statutes_mentioned'])} statute references in contract text")
-        _update_job(job_id, 40, f"Jurisdiction: {state_info}")
+        _update_job(job_id, 15, f"Jurisdiction: {state_info}")
 
         # Step 4: Search statutes
-        _update_job(job_id, 45, "Searching for relevant statutes...")
+        _update_job(job_id, 16, "Searching for relevant statutes...")
         statutes_context = ""
         if jurisdiction.get("state_abbrev"):
             statutes = search_statutes_for_state(
@@ -796,14 +829,14 @@ def _run_analysis(job_id):
                     f"- {s.get('statute_number', 'N/A')}: {s.get('title', '')}\n  {s.get('summary', '')}"
                     for s in statutes
                 )
-                _update_job(job_id, 55, f"Found {len(statutes)} relevant statutes.")
+                _update_job(job_id, 18, f"Found {len(statutes)} relevant statutes.")
             else:
-                _update_job(job_id, 55, "No cached statutes found; proceeding with analysis.")
+                _update_job(job_id, 18, "No cached statutes found; proceeding with analysis.")
         else:
-            _update_job(job_id, 55, "No jurisdiction detected; skipping statute search.")
+            _update_job(job_id, 18, "No jurisdiction detected; skipping statute search.")
 
         # Step 5: Load ideal template and reference contracts
-        _update_job(job_id, 60, "Loading ideal template for comparison...")
+        _update_job(job_id, 19, "Loading ideal template for comparison...")
         ideal_template_text = get_full_text(config.IDEAL_TEMPLATE_PATH)
         reference_texts = _get_reference_texts()
         if reference_texts:
@@ -812,7 +845,20 @@ def _run_analysis(job_id):
         # Step 6: AI Analysis (using selected model)
         settings = _load_settings()
         selected_model = settings.get("model", config.CLAUDE_MODEL)
-        _update_job(job_id, 65, f"Running AI analysis with {selected_model}...")
+        _update_job(job_id, 20, f"Starting AI analysis with {selected_model}...")
+
+        # Streaming progress: the analyzer streams text chunks back. We translate
+        # bytes-received → percent within the band so the bar moves smoothly
+        # instead of sitting at one value for 2-5 minutes.
+        def _stream_progress(phase, chars_so_far):
+            state = jurisdiction.get("state") if isinstance(jurisdiction, dict) else None
+            msg = _llm_narrative_msg(phase, chars_so_far, state)
+            if phase == "analysis":
+                pct = 20 + int(55 * min(1.0, chars_so_far / _EXPECTED_ANALYSIS_CHARS))
+            else:  # revisions
+                pct = 75 + int(10 * min(1.0, chars_so_far / _EXPECTED_REVISION_CHARS))
+            _update_job_progress(job_id, pct, msg)
+
         analysis = analyze_contract(
             contract_text, ideal_template_text,
             statutes_context=statutes_context,
@@ -820,6 +866,7 @@ def _run_analysis(job_id):
             model=selected_model,
             log_fn=lambda msg: _log_activity(job_id, msg),
             pdf_attachments=pdf_attachments,
+            progress_fn=_stream_progress,
         )
 
         # If text-based jurisdiction detection failed but the LLM identified a
@@ -852,12 +899,11 @@ def _run_analysis(job_id):
             _log_activity(job_id, f"API usage: {total_in:,} input + {total_out:,} output tokens — estimated cost: ${cost:.4f}")
         num_revisions = len(analysis.get("revisions", []))
         _log_activity(job_id, f"Generated {num_revisions} suggested revisions for track changes")
-        _update_job(job_id, 80, "Analysis complete. Generating reports...")
+        _update_job(job_id, 88, "Analysis complete. Generating scorecard...")
 
         # Step 7: Generate scorecard (docx + pdf) — the only auto-generated artifact.
-        # Executive summary, marked-up contract, and client template edition are
-        # generated on demand from the results page.
-        _update_job(job_id, 85, "Generating scorecard...")
+        # Executive summary, marked-up contract, client template edition, and the
+        # standalone revisions document are generated on demand from the results page.
         job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
         scorecard_path = os.path.join(job_dir, "scorecard.docx")
         generate_scorecard(analysis, job["client_name"], scorecard_path, jurisdiction)
@@ -944,6 +990,55 @@ def _update_job(job_id, progress, message):
         job["status_message"] = message
         _log_activity(job_id, message)
         _persist_job(job_id)
+
+
+def _update_job_progress(job_id, progress, message):
+    """Update progress without spamming the activity log.
+
+    Used during streaming, when the bar moves frequently but the displayed
+    status message only changes when the narrative phase shifts. Logs to the
+    activity log only when the message actually changes.
+    """
+    job = jobs.get(job_id)
+    if not job:
+        return
+    job["progress"] = progress
+    if message and message != job.get("status_message"):
+        job["status_message"] = message
+        _log_activity(job_id, message)
+
+
+# Expected output sizes for narrative + progress math. These are rough averages
+# observed in practice; they only affect pacing of the progress bar, not the
+# actual analysis. Streaming progress is capped so it can't overrun the band.
+_EXPECTED_ANALYSIS_CHARS = 18000
+_EXPECTED_REVISION_CHARS = 5000
+
+
+def _llm_narrative_msg(phase, chars, jurisdiction_state=None):
+    """Build a phase-aware narrative status message based on streamed output.
+
+    Returned strings show the user *what Claude is doing right now* instead of
+    a single frozen "Running AI analysis..." that sits for minutes.
+    """
+    if phase == "revisions":
+        return f"Drafting specific text revisions for weak areas ({chars:,} chars generated)..."
+
+    expected = _EXPECTED_ANALYSIS_CHARS
+    pct = chars / expected if expected else 0
+    state = jurisdiction_state if jurisdiction_state and jurisdiction_state.lower() != "unknown" else None
+
+    if pct < 0.15:
+        return "Claude is reading the contract and comparing against the master template..."
+    if pct < 0.35:
+        return "Scoring profitability and empowerment clauses..."
+    if pct < 0.55:
+        if state:
+            return f"Reviewing risk transference and {state} statute compliance..."
+        return "Reviewing risk transference and statute compliance..."
+    if pct < 0.75:
+        return "Drafting suggested revisions and assessing manager protection gaps..."
+    return f"Finalizing the analysis ({chars:,} characters generated)..."
 
 
 def _load_prompts():

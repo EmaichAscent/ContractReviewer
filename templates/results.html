@@ -45,13 +45,26 @@
                 <strong>Marked Client Contract (Word)</strong>
                 <p class="help-text">Client contract with track changes showing every suggested revision.</p>
                 {% if not has_primary_docx %}
-                <p class="help-text warn-text">Original contract was a PDF — track changes cannot be applied.</p>
+                <p class="help-text warn-text">Original contract was a PDF — track changes cannot be applied. Use the <em>Suggested Revisions Document</em> below instead.</p>
                 {% endif %}
             </div>
             <div class="artifact-controls">
                 <button class="btn btn-primary artifact-generate" data-kind="marked" {% if not has_primary_docx %}disabled{% endif %}>Generate</button>
                 <span class="artifact-spinner" hidden>Generating…</span>
                 <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/marked" hidden>Download</a>
+                <span class="artifact-error" hidden></span>
+            </div>
+        </div>
+
+        <div class="artifact-row" data-kind="revisions" data-status="{{ artifact_states['revisions'].status }}">
+            <div class="artifact-info">
+                <strong>Suggested Revisions Document (Word)</strong>
+                <p class="help-text">Standalone change list organized by scoring category. Each weak criterion shows current contract language, proposed replacement, and recommended location. Works for PDF uploads since it doesn't modify the original.</p>
+            </div>
+            <div class="artifact-controls">
+                <button class="btn btn-primary artifact-generate" data-kind="revisions">Generate</button>
+                <span class="artifact-spinner" hidden>Generating…</span>
+                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/revisions" hidden>Download</a>
                 <span class="artifact-error" hidden></span>
             </div>
         </div>

@@ -65,7 +65,7 @@ def load_prompts():
     return merged
 
 
-def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None, pdf_attachments=None):
+def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None, pdf_attachments=None, progress_fn=None):
     """Analyze a contract against the ideal template and scoring criteria.
 
     Args:
@@ -80,6 +80,9 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
         pdf_attachments: optional list of paths to PDF files. When provided, the
             PDFs are sent to Claude as multimodal document content (handles
             scanned/OCR'd PDFs that pdfplumber can't extract).
+        progress_fn: optional callback function(phase, chars_so_far) called as
+            text streams in from Claude. Lets the caller update a progress bar
+            and status message in real time. Phase is "analysis" or "revisions".
 
     Returns:
         dict with analysis results including scores, explanations, and revisions
@@ -152,15 +155,19 @@ Please analyze the contract and return your complete analysis as JSON."""
     total_prompt_words = len(user_prompt.split())
     num_criteria = sum(len(c["criteria"]) for c in criteria_data["categories"].values())
 
-    log(f"Preparing analysis prompt: {contract_words:,} contract words + {template_words:,} template words")
-    if pdf_blocks:
-        log(f"Sending {len(pdf_blocks)} PDF(s) directly to {model} for multimodal analysis")
+    if pdf_blocks and contract_words == 0:
+        log(f"Preparing analysis prompt: contract is in {len(pdf_blocks)} attached PDF(s) (text extraction returned 0 words — Claude will read the PDF directly) + {template_words:,} template words")
+    elif pdf_blocks:
+        log(f"Preparing analysis prompt: {contract_words:,} extracted contract words + {len(pdf_blocks)} attached PDF(s) for multimodal context + {template_words:,} template words")
+    else:
+        log(f"Preparing analysis prompt: {contract_words:,} contract words + {template_words:,} template words")
     log(f"Scoring against {num_criteria} criteria across {len(criteria_data['categories'])} categories")
     log(f"Sending {total_prompt_words:,} words to {model} (this may take 2-5 minutes)...")
 
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     message_content = pdf_blocks + [{"type": "text", "text": user_prompt}] if pdf_blocks else user_prompt
-    # Use streaming — the SDK refuses non-streaming calls that might exceed 10
+    # Stream the response so we can update a progress bar in real time and
+    # also because the SDK refuses non-streaming calls that might exceed 10
     # minutes (multimodal PDF + 32k max_tokens crosses that threshold).
     with client.messages.stream(
         model=model,
@@ -168,6 +175,18 @@ Please analyze the contract and return your complete analysis as JSON."""
         system=system_prompt,
         messages=[{"role": "user", "content": message_content}],
     ) as stream:
+        chars_so_far = 0
+        last_notified = 0
+        for text_chunk in stream.text_stream:
+            chars_so_far += len(text_chunk)
+            # Throttle progress callbacks — text_stream can yield very small
+            # chunks (one token = ~4 chars) and we don't want to flood the UI.
+            if progress_fn and chars_so_far - last_notified >= 500:
+                try:
+                    progress_fn("analysis", chars_so_far)
+                except Exception:
+                    pass
+                last_notified = chars_so_far
         response = stream.get_final_message()
 
     response_text = response.content[0].text
@@ -207,7 +226,7 @@ Please analyze the contract and return your complete analysis as JSON."""
 
     revisions, rev_usage = _get_revisions(
         client, system_prompt, prompts, contract_text, analysis, model,
-        log_fn=log_fn, pdf_attachments=pdf_attachments,
+        log_fn=log_fn, pdf_attachments=pdf_attachments, progress_fn=progress_fn,
     )
     analysis["revisions"] = revisions
 
@@ -224,7 +243,7 @@ Please analyze the contract and return your complete analysis as JSON."""
     return analysis
 
 
-def _get_revisions(client, system_prompt, prompts, contract_text, analysis, model=None, log_fn=None, pdf_attachments=None):
+def _get_revisions(client, system_prompt, prompts, contract_text, analysis, model=None, log_fn=None, pdf_attachments=None, progress_fn=None):
     """Get specific text revisions for track changes."""
     def log(msg):
         if log_fn:
@@ -278,6 +297,16 @@ Generate specific, actionable text revisions as a JSON array."""
         system=system_prompt,
         messages=[{"role": "user", "content": message_content}],
     ) as stream:
+        chars_so_far = 0
+        last_notified = 0
+        for text_chunk in stream.text_stream:
+            chars_so_far += len(text_chunk)
+            if progress_fn and chars_so_far - last_notified >= 500:
+                try:
+                    progress_fn("revisions", chars_so_far)
+                except Exception:
+                    pass
+                last_notified = chars_so_far
         response = stream.get_final_message()
 
     revisions = _extract_json_array(response.content[0].text)
