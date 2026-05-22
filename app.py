@@ -203,11 +203,19 @@ def status(job_id):
         return redirect(url_for("index"))
     if job["status"] == "complete":
         return redirect(url_for("results", job_id=job_id))
+    # Pull live-score category names from scoring criteria so the processing
+    # screen's "live scores" panel matches the categories the LLM actually
+    # produces — no hardcoded names that drift when criteria change.
+    try:
+        category_names = list(load_criteria()["categories"].keys())
+    except Exception:
+        category_names = []
     return render_template("status.html",
         job_id=job_id,
         client_name=job["client_name"],
         progress=job["progress"],
         status_message=job["status_message"],
+        category_names=category_names,
     )
 
 

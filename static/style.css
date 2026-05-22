@@ -45,6 +45,11 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The HTML `hidden` attribute must always override our component display
+   rules (.btn uses inline-flex, .artifact-spinner uses inline-flex, etc.).
+   Without this, the buttons all stay visible even when toggled off in JS. */
+[hidden] { display: none !important; }
+
 html, body {
     background: var(--bg);
     color: var(--text);

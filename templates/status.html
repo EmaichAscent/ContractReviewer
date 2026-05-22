@@ -61,12 +61,11 @@
             <div class="panel-header">Live scores</div>
             <div class="panel-body">
                 <ul class="live-scores" id="liveScores">
-                    <li class="live-score pending"><span class="cat">Profitability</span><span class="pct">—</span></li>
-                    <li class="live-score pending"><span class="cat">Empowerment</span><span class="pct">—</span></li>
-                    <li class="live-score pending"><span class="cat">Risk Transference</span><span class="pct">—</span></li>
-                    <li class="live-score pending"><span class="cat">Board Responsibilities</span><span class="pct">—</span></li>
-                    <li class="live-score pending"><span class="cat">Statutory Compliance</span><span class="pct">—</span></li>
-                    <li class="live-score pending"><span class="cat">Maximum Business Value</span><span class="pct">—</span></li>
+                    {% for cat_name in category_names %}
+                    <li class="live-score pending" data-cat="{{ cat_name }}"><span class="cat">{{ cat_name }}</span><span class="pct">—</span></li>
+                    {% else %}
+                    <li class="live-score pending"><span class="cat">Waiting…</span><span class="pct">—</span></li>
+                    {% endfor %}
                 </ul>
             </div>
         </div>
@@ -124,17 +123,40 @@
         });
     }
 
+    function normalizeCat(s) {
+        return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+    }
+
     function updateLiveScores(partial) {
-        const items = document.querySelectorAll(".live-score");
+        if (!partial) return;
+        const list = document.getElementById("liveScores");
+        const items = Array.from(list.querySelectorAll(".live-score"));
+
+        // Build a lookup from normalized template-category name -> element
+        const byName = {};
         items.forEach(item => {
-            const cat = item.querySelector(".cat").textContent.trim();
-            const pctEl = item.querySelector(".pct");
-            if (partial && partial[cat] !== undefined) {
-                const pct = Math.round(partial[cat] * 100);
-                item.classList.remove("pending", "good", "warn", "bad");
-                item.classList.add("done", scoreClass(pct));
-                pctEl.textContent = pct + "%";
+            const raw = item.dataset.cat || item.querySelector(".cat").textContent;
+            byName[normalizeCat(raw)] = item;
+        });
+
+        Object.entries(partial).forEach(([catName, score]) => {
+            const key = normalizeCat(catName);
+            let item = byName[key];
+            if (!item) {
+                // Category from LLM doesn't match any template name — append a
+                // new row so the user still sees the score.
+                item = document.createElement("li");
+                item.className = "live-score pending";
+                item.dataset.cat = catName;
+                item.innerHTML = '<span class="cat">' + catName + '</span><span class="pct">—</span>';
+                list.appendChild(item);
+                byName[key] = item;
             }
+            const pct = Math.round(score * 100);
+            const pctEl = item.querySelector(".pct");
+            item.classList.remove("pending", "good", "warn", "bad");
+            item.classList.add("done", scoreClass(pct));
+            pctEl.textContent = pct + "%";
         });
     }
 
