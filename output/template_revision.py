@@ -112,12 +112,15 @@ def _request_template_revisions(template_text, analysis, client_name, jurisdicti
 Return the JSON object as specified."""
 
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    response = client.messages.create(
+    # Streaming is required when max_tokens + prompt size make the call
+    # potentially exceed the SDK's 10-minute non-streaming ceiling.
+    with client.messages.stream(
         model=model,
         max_tokens=config.MAX_TOKENS,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
 
     parsed = _extract_json_object(response.content[0].text) or {}
     revisions = parsed.get("revisions", []) or []

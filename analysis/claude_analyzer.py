@@ -160,12 +160,15 @@ Please analyze the contract and return your complete analysis as JSON."""
 
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     message_content = pdf_blocks + [{"type": "text", "text": user_prompt}] if pdf_blocks else user_prompt
-    response = client.messages.create(
+    # Use streaming — the SDK refuses non-streaming calls that might exceed 10
+    # minutes (multimodal PDF + 32k max_tokens crosses that threshold).
+    with client.messages.stream(
         model=model,
         max_tokens=config.MAX_TOKENS,
         system=system_prompt,
         messages=[{"role": "user", "content": message_content}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
 
     response_text = response.content[0].text
     log(f"AI response received — {response.usage.output_tokens:,} tokens ({len(response_text):,} chars)")
@@ -269,12 +272,13 @@ Generate specific, actionable text revisions as a JSON array."""
     log(f"Sending revision request to {model} for {len(weak_areas)} weak areas...")
 
     message_content = pdf_blocks + [{"type": "text", "text": user_prompt}] if pdf_blocks else user_prompt
-    response = client.messages.create(
+    with client.messages.stream(
         model=model,
         max_tokens=config.MAX_TOKENS,
         system=system_prompt,
         messages=[{"role": "user", "content": message_content}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
 
     revisions = _extract_json_array(response.content[0].text)
     log(f"Revision response received — {len(revisions)} specific text changes suggested")
