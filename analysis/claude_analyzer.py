@@ -11,6 +11,48 @@ from analysis.scoring_criteria import load_criteria, calculate_category_score
 from parsing.docx_parser import get_full_text
 
 
+def extract_partial_scores(accumulated_text):
+    """Try to repair partial JSON streaming from Claude and pull scores for any
+    category blocks that have completed enough to be scorable.
+
+    Used by the live processing screen to show scores building up in real time
+    as Claude analyzes each category. Returns a dict:
+
+        {
+            "categories": {"Profitability": 0.33, "Empowerment": 0.5, ...},
+            "jurisdiction": "Louisiana"  (or None)
+        }
+
+    Either field may be empty if the stream hasn't reached usable content yet.
+    """
+    out = {"categories": {}, "jurisdiction": None}
+    if not accumulated_text or "{" not in accumulated_text:
+        return out
+
+    repaired = _repair_truncated_json(accumulated_text)
+    if not repaired:
+        return out
+    try:
+        parsed = json.loads(repaired)
+    except (json.JSONDecodeError, ValueError):
+        return out
+
+    juris = parsed.get("jurisdiction")
+    if isinstance(juris, dict) and juris.get("state"):
+        out["jurisdiction"] = juris["state"]
+
+    for cat_name, cat_data in (parsed.get("categories") or {}).items():
+        if not isinstance(cat_data, dict):
+            continue
+        scores = {}
+        for crit_id, crit in (cat_data.get("criteria") or {}).items():
+            if isinstance(crit, dict) and "score" in crit:
+                scores[crit_id] = crit["score"]
+        if scores:
+            out["categories"][cat_name] = calculate_category_score(scores)
+    return out
+
+
 def _build_pdf_content_blocks(pdf_paths, log_fn=None):
     """Convert PDF paths into Anthropic document content blocks for multimodal input.
 
@@ -175,15 +217,23 @@ Please analyze the contract and return your complete analysis as JSON."""
         system=system_prompt,
         messages=[{"role": "user", "content": message_content}],
     ) as stream:
-        chars_so_far = 0
+        accumulated = ""
         last_notified = 0
+        last_score_check = 0
+        last_partial = None
         for text_chunk in stream.text_stream:
-            chars_so_far += len(text_chunk)
+            accumulated += text_chunk
+            chars_so_far = len(accumulated)
             # Throttle progress callbacks — text_stream can yield very small
             # chunks (one token = ~4 chars) and we don't want to flood the UI.
             if progress_fn and chars_so_far - last_notified >= 500:
+                # Score-extraction parse is more expensive than the progress
+                # update, so we only re-extract every ~2000 chars.
+                if chars_so_far - last_score_check >= 2000:
+                    last_partial = extract_partial_scores(accumulated)
+                    last_score_check = chars_so_far
                 try:
-                    progress_fn("analysis", chars_so_far)
+                    progress_fn("analysis", chars_so_far, last_partial)
                 except Exception:
                     pass
                 last_notified = chars_so_far
@@ -303,7 +353,7 @@ Generate specific, actionable text revisions as a JSON array."""
             chars_so_far += len(text_chunk)
             if progress_fn and chars_so_far - last_notified >= 500:
                 try:
-                    progress_fn("revisions", chars_so_far)
+                    progress_fn("revisions", chars_so_far, None)
                 except Exception:
                     pass
                 last_notified = chars_so_far

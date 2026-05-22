@@ -1,197 +1,225 @@
 {% extends "base.html" %}
-{% block title %}Results - {{ client_name }} - Contract Reviewer{% endblock %}
+{% block title %}{{ client_name }} — Contract Review{% endblock %}
 {% block content %}
-<div class="results-section">
-    <h1>Contract Review Results</h1>
-    <div class="results-meta">
-        <p><strong>Client:</strong> {{ client_name }}</p>
-        {% if jurisdiction %}
-        <p><strong>Jurisdiction:</strong> {{ jurisdiction.state }} ({{ jurisdiction.state_abbrev }})</p>
-        {% endif %}
-        <p><strong>Review Date:</strong> {{ review_date }}</p>
-        {% if usage %}
-        <p><strong>Model:</strong> {{ usage.model }}
-        &nbsp;|&nbsp; <strong>Tokens:</strong> {{ "{:,}".format(usage.total_input_tokens) }} in / {{ "{:,}".format(usage.total_output_tokens) }} out
-        &nbsp;|&nbsp; <strong>Estimated Cost:</strong> ${{ "%.4f"|format(usage.estimated_cost) }}</p>
-        {% endif %}
-    </div>
-
-    <!-- Scorecard (always available) -->
-    <div class="download-buttons">
-        <a href="/download/{{ job_id }}/scorecard_pdf" class="btn btn-primary">Full Scorecard (PDF)</a>
-        <a href="/download/{{ job_id }}/scorecard" class="btn btn-secondary">Full Scorecard (Word)</a>
-    </div>
-
-    <!-- Optional artifacts: generate on demand -->
-    <div class="optional-artifacts">
-        <h2>Additional Outputs</h2>
-        <p class="help-text">These artifacts are generated only when requested.</p>
-
-        <div class="artifact-row" data-kind="exec-summary" data-status="{{ artifact_states['exec-summary'].status }}">
-            <div class="artifact-info">
-                <strong>Executive Summary (PDF)</strong>
-                <p class="help-text">Structured summary with risk rating, top priorities, statutory compliance, and next steps.</p>
-            </div>
-            <div class="artifact-controls">
-                <button class="btn btn-primary artifact-generate" data-kind="exec-summary">Generate</button>
-                <span class="artifact-spinner" hidden>Generating…</span>
-                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/executive_summary" hidden>Download</a>
-                <span class="artifact-error" hidden></span>
-            </div>
+<div class="results-page">
+    <header class="results-header">
+        <div>
+            <span class="results-eyebrow">Contract Review</span>
+            <h1>{{ client_name }}</h1>
         </div>
+        <dl class="results-meta-grid">
+            {% if jurisdiction %}
+            <div><dt>Jurisdiction</dt><dd>{{ jurisdiction.state }}{% if jurisdiction.state_abbrev %} ({{ jurisdiction.state_abbrev }}){% endif %}</dd></div>
+            {% endif %}
+            <div><dt>Reviewed</dt><dd>{{ review_date }}</dd></div>
+            {% if usage %}
+            <div><dt>Model</dt><dd>{{ usage.model }}</dd></div>
+            <div><dt>Cost</dt><dd>${{ "%.4f"|format(usage.estimated_cost) }}</dd></div>
+            {% endif %}
+        </dl>
+    </header>
 
-        <div class="artifact-row" data-kind="marked" data-status="{{ artifact_states['marked'].status }}">
-            <div class="artifact-info">
-                <strong>Marked Client Contract (Word)</strong>
-                <p class="help-text">Client contract with track changes showing every suggested revision.</p>
-                {% if not has_primary_docx %}
-                <p class="help-text warn-text">Original contract was a PDF — track changes cannot be applied. Use the <em>Suggested Revisions Document</em> below instead.</p>
-                {% endif %}
-            </div>
-            <div class="artifact-controls">
-                <button class="btn btn-primary artifact-generate" data-kind="marked" {% if not has_primary_docx %}disabled{% endif %}>Generate</button>
-                <span class="artifact-spinner" hidden>Generating…</span>
-                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/marked" hidden>Download</a>
-                <span class="artifact-error" hidden></span>
-            </div>
-        </div>
+    <div class="results-layout">
+        <main class="results-main">
+            <!-- Hero: overall score + category strip -->
+            <section class="hero-card">
+                <div class="hero-score">
+                    <div class="score-circle {{ score_class }}">
+                        <span class="score-number">{{ overall_pct }}%</span>
+                    </div>
+                    <div class="hero-score-meta">
+                        <span class="hero-label">Overall</span>
+                        <p class="score-rating">{{ score_rating }}</p>
+                    </div>
+                </div>
+                <div class="hero-divider"></div>
+                <div class="hero-bars">
+                    {% for cat_name, cat_data in categories.items() %}
+                    {% set cat_pct = (cat_data.score * 100) | round | int %}
+                    <div class="score-bar-item">
+                        <div class="score-bar-label">
+                            <span>{{ cat_name }}</span>
+                            <span class="score-bar-pct {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}">{{ cat_pct }}%</span>
+                        </div>
+                        <div class="score-bar-track">
+                            <div class="score-bar-fill {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}" style="width: {{ cat_pct }}%"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
 
-        <div class="artifact-row" data-kind="revisions" data-status="{{ artifact_states['revisions'].status }}">
-            <div class="artifact-info">
-                <strong>Suggested Revisions Document (Word)</strong>
-                <p class="help-text">Standalone change list organized by scoring category. Each weak criterion shows current contract language, proposed replacement, and recommended location. Works for PDF uploads since it doesn't modify the original.</p>
-            </div>
-            <div class="artifact-controls">
-                <button class="btn btn-primary artifact-generate" data-kind="revisions">Generate</button>
-                <span class="artifact-spinner" hidden>Generating…</span>
-                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/revisions" hidden>Download</a>
-                <span class="artifact-error" hidden></span>
-            </div>
-        </div>
+            {% if recommendation %}
+            <section class="recommendation-section">
+                <h2>Overall Recommendation</h2>
+                <p>{{ recommendation }}</p>
+            </section>
+            {% endif %}
 
-        <div class="artifact-row" data-kind="template-edition" data-status="{{ artifact_states['template-edition'].status }}">
-            <div class="artifact-info">
-                <strong>Client Template Edition (Word)</strong>
-                <p class="help-text">Revised master template — imports favorable client language and statutory provisions as track changes with Word comments. Takes 1-3 minutes.</p>
-            </div>
-            <div class="artifact-controls">
-                <button class="btn btn-primary artifact-generate" data-kind="template-edition">Build</button>
-                <span class="artifact-spinner" hidden>Generating… (1-3 min)</span>
-                <a class="btn btn-success artifact-download" href="/download/{{ job_id }}/template_edition" hidden>Download</a>
-                <span class="artifact-error" hidden></span>
-            </div>
-        </div>
-    </div>
-
-    <div class="overall-score">
-        <div class="score-circle {{ score_class }}">
-            <span class="score-number">{{ overall_pct }}%</span>
-        </div>
-        <h2>Overall Score</h2>
-        <p class="score-rating">{{ score_rating }}</p>
-    </div>
-
-    <div class="scores-summary">
-        {% for cat_name, cat_data in categories.items() %}
-        {% set cat_pct = (cat_data.score * 100) | round | int %}
-        <div class="score-bar-item">
-            <div class="score-bar-label">
-                <span>{{ cat_name }}</span>
-                <span class="score-bar-pct {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}">{{ cat_pct }}%</span>
-            </div>
-            <div class="score-bar-track">
-                <div class="score-bar-fill {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}" style="width: {{ cat_pct }}%"></div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-
-    {% for cat_name, cat_data in categories.items() %}
-    <div class="category-card">
-        <div class="category-header">
-            <h3>{{ cat_name }}</h3>
-            <span class="category-score {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}">
-                {{ (cat_data.score * 100) | round | int }}%
-            </span>
-        </div>
-        {% if cat_data.summary %}
-        <p class="category-summary">{{ cat_data.summary }}</p>
-        {% endif %}
-        <div class="criteria-list">
-            {% for crit_id, crit in cat_data.criteria.items() %}
-            {% if crit is mapping %}
-            <div class="criterion {{ 'good' if crit.score == 2 else 'warn' if crit.score == 1 else 'bad' }}">
-                <div class="criterion-header">
-                    <span class="criterion-name">{{ crit_id | replace('profit_', '') | replace('empower_', '') | replace('risk_', '') | replace('board_', '') | replace('value_', '') | replace('_', ' ') | title }}</span>
-                    <span class="criterion-score-badge {{ 'good' if crit.score == 2 else 'warn' if crit.score == 1 else 'bad' }}">
-                        {% if crit.score == 2 %}Strong{% elif crit.score == 1 %}Weak{% else %}Missing{% endif %}
+            <!-- Per-category breakdown -->
+            {% for cat_name, cat_data in categories.items() %}
+            <section class="category-card">
+                <div class="category-header">
+                    <h3>{{ cat_name }}</h3>
+                    <span class="category-score {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}">
+                        {{ (cat_data.score * 100) | round | int }}%
                     </span>
                 </div>
-                {% if crit.explanation %}
-                <p class="criterion-detail">{{ crit.explanation }}</p>
+                {% if cat_data.summary %}
+                <p class="category-summary">{{ cat_data.summary }}</p>
                 {% endif %}
-                {% if crit.contract_text %}
-                <div class="contract-quote">
-                    <strong>Contract language:</strong> "{{ crit.contract_text[:300] }}{% if crit.contract_text|length > 300 %}...{% endif %}"
+                <div class="criteria-list">
+                    {% for crit_id, crit in cat_data.criteria.items() %}
+                    {% if crit is mapping %}
+                    <div class="criterion {{ 'good' if crit.score == 2 else 'warn' if crit.score == 1 else 'bad' }}">
+                        <div class="criterion-header">
+                            <span class="criterion-name">{{ crit_id | replace('profit_', '') | replace('empower_', '') | replace('risk_', '') | replace('board_', '') | replace('value_', '') | replace('_', ' ') | title }}</span>
+                            <span class="criterion-score-badge {{ 'good' if crit.score == 2 else 'warn' if crit.score == 1 else 'bad' }}">
+                                {% if crit.score == 2 %}Strong{% elif crit.score == 1 %}Weak{% else %}Missing{% endif %}
+                            </span>
+                        </div>
+                        {% if crit.explanation %}
+                        <p class="criterion-detail">{{ crit.explanation }}</p>
+                        {% endif %}
+                        {% if crit.contract_text %}
+                        <div class="contract-quote">
+                            <strong>Contract language:</strong> "{{ crit.contract_text[:300] }}{% if crit.contract_text|length > 300 %}…{% endif %}"
+                        </div>
+                        {% endif %}
+                        {% if crit.suggested_revision %}
+                        <div class="revision-suggestion">
+                            <strong>Recommended revision:</strong> {{ crit.suggested_revision[:500] }}{% if crit.suggested_revision|length > 500 %}…{% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% endfor %}
                 </div>
-                {% endif %}
-                {% if crit.suggested_revision %}
-                <div class="revision-suggestion">
-                    <strong>Recommended revision:</strong> {{ crit.suggested_revision[:500] }}{% if crit.suggested_revision|length > 500 %}...{% endif %}
+            </section>
+            {% endfor %}
+
+            {% if gap_analysis %}
+            <section class="gap-analysis-section">
+                <h2>Gap Analysis — Client Language Worth Importing</h2>
+                <p class="help-text">Language in this client's contract that strengthens manager protection but is not present in the firm's master template.</p>
+                <table class="gap-analysis-table">
+                    <thead>
+                        <tr>
+                            <th style="width:55%">Client Contract Language</th>
+                            <th style="width:25%">Template Section</th>
+                            <th style="width:20%">Why Import</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for gap in gap_analysis %}
+                        <tr>
+                            <td>
+                                {% if gap.client_section %}<strong>{{ gap.client_section }}:</strong> {% endif %}
+                                "{{ gap.client_quote }}"
+                            </td>
+                            <td>{{ gap.template_section or "—" }}</td>
+                            <td>{{ gap.rationale or "—" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
+            {% endif %}
+
+            {% if statute_concerns %}
+            <section class="statute-section">
+                <h2>Statutory Compliance Notes</h2>
+                <ul>
+                    {% for concern in statute_concerns %}
+                    <li>{{ concern }}</li>
+                    {% endfor %}
+                </ul>
+            </section>
+            {% endif %}
+        </main>
+
+        <!-- Sticky right rail: scorecard downloads + on-demand artifacts -->
+        <aside class="results-rail">
+            <div class="rail-section">
+                <h3 class="rail-heading">Scorecard</h3>
+                <div class="rail-actions">
+                    <a href="/download/{{ job_id }}/scorecard_pdf" class="btn btn-primary btn-block">Download PDF</a>
+                    <a href="/download/{{ job_id }}/scorecard" class="btn btn-secondary btn-block">Download Word</a>
                 </div>
-                {% endif %}
+            </div>
+
+            <div class="rail-section">
+                <h3 class="rail-heading">Additional outputs</h3>
+                <p class="rail-help">Generated on demand from the analysis.</p>
+
+                <div class="artifact-row" data-kind="exec-summary" data-status="{{ artifact_states['exec-summary'].status }}">
+                    <div class="artifact-info">
+                        <strong>Executive Summary</strong>
+                        <p class="help-text">PDF · risk rating, top priorities, statutory compliance, next steps</p>
+                    </div>
+                    <div class="artifact-controls">
+                        <button class="btn btn-primary btn-small artifact-generate" data-kind="exec-summary">Generate</button>
+                        <span class="artifact-spinner" hidden>Generating…</span>
+                        <a class="btn btn-success btn-small artifact-download" href="/download/{{ job_id }}/executive_summary" hidden>Download</a>
+                        <span class="artifact-error" hidden></span>
+                    </div>
+                </div>
+
+                <div class="artifact-row" data-kind="revisions" data-status="{{ artifact_states['revisions'].status }}">
+                    <div class="artifact-info">
+                        <strong>Suggested Revisions</strong>
+                        <p class="help-text">Word · clean change list by category. Works for any input.</p>
+                    </div>
+                    <div class="artifact-controls">
+                        <button class="btn btn-primary btn-small artifact-generate" data-kind="revisions">Generate</button>
+                        <span class="artifact-spinner" hidden>Generating…</span>
+                        <a class="btn btn-success btn-small artifact-download" href="/download/{{ job_id }}/revisions" hidden>Download</a>
+                        <span class="artifact-error" hidden></span>
+                    </div>
+                </div>
+
+                <div class="artifact-row" data-kind="marked" data-status="{{ artifact_states['marked'].status }}">
+                    <div class="artifact-info">
+                        <strong>Marked Client Contract</strong>
+                        <p class="help-text">Word · track changes inline on the original</p>
+                        {% if not has_primary_docx %}
+                        <p class="help-text warn-text">PDF input — use Suggested Revisions above.</p>
+                        {% endif %}
+                    </div>
+                    <div class="artifact-controls">
+                        <button class="btn btn-primary btn-small artifact-generate" data-kind="marked" {% if not has_primary_docx %}disabled{% endif %}>Generate</button>
+                        <span class="artifact-spinner" hidden>Generating…</span>
+                        <a class="btn btn-success btn-small artifact-download" href="/download/{{ job_id }}/marked" hidden>Download</a>
+                        <span class="artifact-error" hidden></span>
+                    </div>
+                </div>
+
+                <div class="artifact-row" data-kind="template-edition" data-status="{{ artifact_states['template-edition'].status }}">
+                    <div class="artifact-info">
+                        <strong>Client Template Edition</strong>
+                        <p class="help-text">Word · revised template, track changes, Word comments · 1-3 min</p>
+                    </div>
+                    <div class="artifact-controls">
+                        <button class="btn btn-primary btn-small artifact-generate" data-kind="template-edition">Build</button>
+                        <span class="artifact-spinner" hidden>Building…</span>
+                        <a class="btn btn-success btn-small artifact-download" href="/download/{{ job_id }}/template_edition" hidden>Download</a>
+                        <span class="artifact-error" hidden></span>
+                    </div>
+                </div>
+            </div>
+
+            {% if usage %}
+            <div class="rail-section rail-usage">
+                <h3 class="rail-heading">Usage</h3>
+                <dl class="rail-stats">
+                    <div><dt>Input tokens</dt><dd>{{ "{:,}".format(usage.total_input_tokens) }}</dd></div>
+                    <div><dt>Output tokens</dt><dd>{{ "{:,}".format(usage.total_output_tokens) }}</dd></div>
+                    <div><dt>Estimated cost</dt><dd>${{ "%.4f"|format(usage.estimated_cost) }}</dd></div>
+                </dl>
             </div>
             {% endif %}
-            {% endfor %}
-        </div>
+        </aside>
     </div>
-    {% endfor %}
-
-    {% if gap_analysis %}
-    <div class="gap-analysis-section">
-        <h2>Gap Analysis — Client Language Worth Importing Into the Template</h2>
-        <p class="help-text">Language in this client's contract that strengthens manager protection but is not present in the firm's master template.</p>
-        <table class="gap-analysis-table">
-            <thead>
-                <tr>
-                    <th style="width:55%">Client Contract Language</th>
-                    <th style="width:25%">Template Section</th>
-                    <th style="width:20%">Why Import</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for gap in gap_analysis %}
-                <tr>
-                    <td>
-                        {% if gap.client_section %}<strong>{{ gap.client_section }}:</strong> {% endif %}
-                        "{{ gap.client_quote }}"
-                    </td>
-                    <td>{{ gap.template_section or "—" }}</td>
-                    <td>{{ gap.rationale or "—" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    {% if statute_concerns %}
-    <div class="statute-section">
-        <h2>Statutory Compliance Notes</h2>
-        <ul>
-            {% for concern in statute_concerns %}
-            <li>{{ concern }}</li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-
-    {% if recommendation %}
-    <div class="recommendation-section">
-        <h2>Recommendation</h2>
-        <p>{{ recommendation }}</p>
-    </div>
-    {% endif %}
 </div>
 
 <script>

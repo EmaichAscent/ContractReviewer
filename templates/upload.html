@@ -1,15 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Upload Contract - Contract Reviewer{% endblock %}
+{% block title %}Upload Contract — Contract Reviewer{% endblock %}
 {% block content %}
 <div class="upload-section">
+    <span class="results-eyebrow">New Review</span>
     <h1>Upload Management Agreement</h1>
-    <p>Upload one or more documents that make up the management agreement. Many agreements consist of a main contract plus exhibits, schedules, and amendments — upload them all together for a complete analysis.</p>
+    <p>One or more files that make up the agreement — main contract, exhibits, schedules, amendments. We'll analyze them all together against the master template and the governing state's statutes.</p>
 
-    <form action="/upload" method="POST" enctype="multipart/form-data" class="upload-form">
+    <form action="/upload" method="POST" enctype="multipart/form-data" class="upload-form" id="uploadForm">
         <div class="form-group">
             <label for="contracts">Agreement Documents</label>
-            <input type="file" name="contracts" id="contracts" accept=".doc,.docx,.pdf" multiple required>
-            <small>Accepted formats: .doc, .docx, .pdf — Select multiple files by holding Ctrl or Shift</small>
+            <label class="dropzone" for="contracts" id="dropzone">
+                <span class="dropzone-icon">↑</span>
+                <span class="dropzone-text">Click to select files, or drop them here</span>
+                <span class="dropzone-help">Accepts .doc, .docx, .pdf · multiple files supported</span>
+                <span class="dropzone-files" id="dropzoneFiles"></span>
+            </label>
+            <input type="file" name="contracts" id="contracts" accept=".doc,.docx,.pdf" multiple required hidden>
         </div>
 
         <div class="form-group">
@@ -74,7 +80,44 @@
             </select>
         </div>
 
-        <button type="submit" class="btn btn-primary">Analyze Contract</button>
+        <button type="submit" class="btn btn-primary">Analyze contract</button>
     </form>
 </div>
+
+<script>
+(function() {
+    const input = document.getElementById("contracts");
+    const dropzone = document.getElementById("dropzone");
+    const filesLabel = document.getElementById("dropzoneFiles");
+
+    function renderFiles() {
+        if (!input.files || input.files.length === 0) {
+            filesLabel.textContent = "";
+            dropzone.classList.remove("has-files");
+            return;
+        }
+        const names = Array.from(input.files).map(f => f.name);
+        filesLabel.innerHTML = names.map(n => '<span class="dropzone-file">' + n + '</span>').join("");
+        dropzone.classList.add("has-files");
+    }
+
+    input.addEventListener("change", renderFiles);
+
+    ["dragenter", "dragover"].forEach(e => dropzone.addEventListener(e, ev => {
+        ev.preventDefault();
+        dropzone.classList.add("drag-over");
+    }));
+    ["dragleave", "drop"].forEach(e => dropzone.addEventListener(e, ev => {
+        ev.preventDefault();
+        dropzone.classList.remove("drag-over");
+    }));
+    dropzone.addEventListener("drop", ev => {
+        ev.preventDefault();
+        if (ev.dataTransfer && ev.dataTransfer.files) {
+            input.files = ev.dataTransfer.files;
+            renderFiles();
+        }
+    });
+})();
+</script>
 {% endblock %}

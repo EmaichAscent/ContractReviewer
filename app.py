@@ -169,6 +169,7 @@ def upload():
         return redirect(url_for("index"))
 
     # Initialize job tracking
+    now = datetime.now()
     jobs[job_id] = {
         "id": job_id,
         "client_name": client_name,
@@ -177,10 +178,13 @@ def upload():
         "status": "processing",
         "progress": 0,
         "status_message": "Starting analysis...",
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "date": now.strftime("%Y-%m-%d %H:%M"),
+        "started_at": now.timestamp(),
         "error": None,
         "results": None,
         "jurisdiction": None,
+        "partial_scores": {},          # populated live during streaming
+        "partial_jurisdiction": None,  # populated live during streaming
     }
 
     # Start background analysis
@@ -212,12 +216,20 @@ def status_json(job_id):
     job = jobs.get(job_id) or _recover_job(job_id)
     if not job:
         return jsonify({"status": "error", "error": "Job not found. The server may have restarted."})
+    started = job.get("started_at")
+    import time as _time
+    elapsed = int(_time.time() - started) if started else 0
     return jsonify({
         "status": job["status"],
         "progress": job["progress"],
         "status_message": job["status_message"],
         "error": job.get("error"),
         "activity_log": job.get("activity_log", []),
+        "partial_scores": job.get("partial_scores") or {},
+        "partial_jurisdiction": job.get("partial_jurisdiction"),
+        "jurisdiction": (job.get("jurisdiction") or {}).get("state") if isinstance(job.get("jurisdiction"), dict) else None,
+        "client_name": job.get("client_name"),
+        "elapsed_seconds": elapsed,
     })
 
 
@@ -849,15 +861,29 @@ def _run_analysis(job_id):
 
         # Streaming progress: the analyzer streams text chunks back. We translate
         # bytes-received → percent within the band so the bar moves smoothly
-        # instead of sitting at one value for 2-5 minutes.
-        def _stream_progress(phase, chars_so_far):
+        # instead of sitting at one value for 2-5 minutes. Partial scores
+        # extracted from in-progress JSON are pushed to the job so the live
+        # processing screen can render scores as they appear.
+        def _stream_progress(phase, chars_so_far, partial=None):
             state = jurisdiction.get("state") if isinstance(jurisdiction, dict) else None
+            # If LLM identified a jurisdiction mid-stream, prefer that for the
+            # narrative message (so the user sees "Louisiana statute compliance"
+            # before the final jurisdiction is committed at end-of-stream).
+            if partial and partial.get("jurisdiction") and not state:
+                state = partial["jurisdiction"]
             msg = _llm_narrative_msg(phase, chars_so_far, state)
             if phase == "analysis":
                 pct = 20 + int(55 * min(1.0, chars_so_far / _EXPECTED_ANALYSIS_CHARS))
             else:  # revisions
                 pct = 75 + int(10 * min(1.0, chars_so_far / _EXPECTED_REVISION_CHARS))
             _update_job_progress(job_id, pct, msg)
+            if partial:
+                job = jobs.get(job_id)
+                if job:
+                    if partial.get("categories"):
+                        job["partial_scores"] = partial["categories"]
+                    if partial.get("jurisdiction"):
+                        job["partial_jurisdiction"] = partial["jurisdiction"]
 
         analysis = analyze_contract(
             contract_text, ideal_template_text,
