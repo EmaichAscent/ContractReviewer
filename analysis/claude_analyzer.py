@@ -26,15 +26,34 @@ def extract_partial_scores(accumulated_text):
     Either field may be empty if the stream hasn't reached usable content yet.
     """
     out = {"categories": {}, "jurisdiction": None}
-    if not accumulated_text or "{" not in accumulated_text:
+    if not accumulated_text:
         return out
 
-    repaired = _repair_truncated_json(accumulated_text)
-    if not repaired:
+    # Claude frequently wraps JSON in ```json ... ``` fences; the repair logic
+    # bails immediately if the first char isn't '{'. Strip the fence and trim
+    # anything before the first '{'.
+    cleaned = accumulated_text.lstrip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:].lstrip()
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:].lstrip()
+    brace_idx = cleaned.find("{")
+    if brace_idx == -1:
         return out
+    cleaned = cleaned[brace_idx:]
+
+    # Try direct parse first in case the stream ended cleanly between checks.
+    parsed = None
     try:
-        parsed = json.loads(repaired)
+        parsed = json.loads(cleaned)
     except (json.JSONDecodeError, ValueError):
+        repaired = _repair_truncated_json(cleaned)
+        if repaired:
+            try:
+                parsed = json.loads(repaired)
+            except (json.JSONDecodeError, ValueError):
+                parsed = None
+    if not parsed:
         return out
 
     juris = parsed.get("jurisdiction")
@@ -506,62 +525,77 @@ def _extract_json_array(text):
 def _repair_truncated_json(text):
     """Attempt to repair JSON that was truncated mid-stream.
 
-    Strategy: progressively try closing the JSON from the end,
-    working backwards to find the longest valid parse.
+    Strategy: walk the text once and record (in_string, depth_curly, depth_square)
+    at every position; then try trim points from end backwards. Precomputing
+    the depth state makes each trim-attempt O(1), so we can search the entire
+    text (any length) instead of being limited to a small window.
     """
     if not text or text[0] != '{':
         return None
 
-    # Try adding closing characters to make it valid
-    # Work from the end of the text backwards, trying to find a repair point
-    for trim_pos in range(len(text), max(0, len(text) - 5000), -1):
-        candidate = text[:trim_pos].rstrip()
+    n = len(text)
+    # depth_after[i] = state AFTER processing text[i]
+    in_string_arr = [False] * n
+    dc_arr = [0] * n
+    ds_arr = [0] * n
+    in_string = False
+    escape_next = False
+    dc = 0
+    ds = 0
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+        elif ch == '\\' and in_string:
+            escape_next = True
+        elif ch == '"':
+            in_string = not in_string
+        elif not in_string:
+            if ch == '{':
+                dc += 1
+            elif ch == '}':
+                dc -= 1
+            elif ch == '[':
+                ds += 1
+            elif ch == ']':
+                ds -= 1
+        in_string_arr[i] = in_string
+        dc_arr[i] = dc
+        ds_arr[i] = ds
 
-        # Remove any trailing comma or colon
+    # Collect candidate trim points — positions immediately after a depth
+    # decrease (i.e., right after a closing `}` or `]` outside a string).
+    # These are the only positions where the prefix can plausibly be closed
+    # cleanly. Skipping irrelevant positions makes this ~O(n) instead of O(n^2).
+    candidates = []
+    prev_dc = 0
+    prev_ds = 0
+    for i in range(n):
+        if in_string_arr[i]:
+            prev_dc = dc_arr[i]
+            prev_ds = ds_arr[i]
+            continue
+        if dc_arr[i] < prev_dc or ds_arr[i] < prev_ds:
+            candidates.append(i + 1)
+        prev_dc = dc_arr[i]
+        prev_ds = ds_arr[i]
+
+    # Try latest candidate first (longest valid prefix).
+    for trim_pos in reversed(candidates):
+        idx = trim_pos - 1
+        if dc_arr[idx] <= 0 and ds_arr[idx] <= 0:
+            continue
+        candidate = text[:trim_pos].rstrip()
         while candidate and candidate[-1] in ',: ':
             candidate = candidate[:-1]
-
-        # Count open/close braces and brackets
-        depth_curly = 0
-        depth_square = 0
-        in_string = False
-        escape_next = False
-
-        for ch in candidate:
-            if escape_next:
-                escape_next = False
-                continue
-            if ch == '\\' and in_string:
-                escape_next = True
-                continue
-            if ch == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if ch == '{':
-                depth_curly += 1
-            elif ch == '}':
-                depth_curly -= 1
-            elif ch == '[':
-                depth_square += 1
-            elif ch == ']':
-                depth_square -= 1
-
-        # If we're inside a string, skip
-        if in_string:
+        if not candidate:
             continue
-
-        # Try to close all open structures
-        if depth_curly > 0 or depth_square > 0:
-            closing = ']' * depth_square + '}' * depth_curly
-            try:
-                result = json.loads(candidate + closing)
-                # Only accept if we got meaningful content
-                if result.get('categories'):
-                    return candidate + closing
-            except (json.JSONDecodeError, ValueError):
-                continue
+        closing = ']' * ds_arr[idx] + '}' * dc_arr[idx]
+        try:
+            result = json.loads(candidate + closing)
+            if isinstance(result, dict) and result.get('categories'):
+                return candidate + closing
+        except (json.JSONDecodeError, ValueError):
+            continue
 
     return None
 
