@@ -175,6 +175,10 @@ Please analyze the contract and return your complete analysis as JSON."""
 
     if analysis.get("parse_error"):
         log("WARNING: Could not parse JSON from AI response — results may be incomplete")
+    elif analysis.get("truncated_response"):
+        score = analysis.get("overall_score", 0)
+        num_cats = len(analysis.get("categories", {}))
+        log(f"WARNING: AI response hit max output tokens — recovered {num_cats} categories with overall score {score:.0%}. Consider re-running for complete coverage.")
     else:
         score = analysis.get("overall_score", 0)
         log(f"Analysis parsed successfully — overall score: {score:.0%}")
@@ -308,15 +312,22 @@ def _format_criteria(criteria_data):
 
 
 def _parse_analysis_response(response_text, criteria_data):
-    """Parse Claude's analysis response into structured results."""
-    # Try to extract JSON
+    """Parse Claude's analysis response into structured results.
+
+    Even if the response was truncated mid-JSON (e.g. hit max_tokens), the
+    repair logic in _extract_json_object often recovers a partial categories
+    map. We still want to compute scores from whatever was salvaged so the
+    results page shows something meaningful instead of 0%.
+    """
     result = _extract_json_object(response_text)
-    if result:
-        # Calculate scores from parsed data
+    if result and result.get("categories"):
         _compute_scores(result, criteria_data)
+        # If repair was used (response was truncated), flag it so the UI can
+        # warn the user that some criteria may be missing.
+        if not response_text.rstrip().endswith("}"):
+            result["truncated_response"] = True
         return result
 
-    # If JSON parsing fails, return a basic structure with the raw response
     return {
         "categories": {},
         "overall_recommendation": response_text,

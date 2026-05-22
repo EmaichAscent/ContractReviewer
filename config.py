@@ -10,7 +10,11 @@ AVAILABLE_MODELS = {
 }
 
 REFERENCE_CONTRACTS_FOLDER = os.path.join(BASE_DIR, "data", "reference_contracts")
-MAX_TOKENS = 16384
+# Output cap for the analyzer. The full contract analysis can easily exceed 16k
+# tokens (30+ criteria × explanation + quote + suggested_revision each), which
+# was truncating responses mid-JSON and producing 0% overall scores on the
+# results page. Claude Sonnet 4.x supports up to 64k output tokens.
+MAX_TOKENS = 32000
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 RESULTS_FOLDER = os.path.join(BASE_DIR, "results")
