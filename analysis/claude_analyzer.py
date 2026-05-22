@@ -108,6 +108,10 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
     # it helps with exact quoting in the response.
     pdf_blocks = _build_pdf_content_blocks(pdf_attachments, log_fn=log)
     if pdf_blocks:
+        try:
+            log(f"anthropic SDK version: {anthropic.__version__}")
+        except Exception:
+            pass
         if contract_text.strip():
             contract_section = (
                 "The contract is provided as attached PDF document(s) — use those "
@@ -283,7 +287,7 @@ def _estimate_cost(model, input_tokens, output_tokens):
     # Pricing per million tokens (as of 2025)
     pricing = {
         "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
-        "claude-opus-4-6": {"input": 15.00, "output": 75.00},
+        "claude-opus-4-7": {"input": 15.00, "output": 75.00},
     }
     rates = pricing.get(model, pricing["claude-sonnet-4-6"])
     cost = (input_tokens * rates["input"] / 1_000_000) + (output_tokens * rates["output"] / 1_000_000)

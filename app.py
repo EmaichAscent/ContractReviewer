@@ -959,13 +959,18 @@ def _load_prompts():
 
 
 def _load_settings():
-    """Load app settings."""
+    """Load app settings. Falls back to the default model when the saved value
+    is a retired model that's no longer in AVAILABLE_MODELS (e.g. a stale
+    selection persisted on the volume from before a model upgrade)."""
     settings_path = os.path.join(config.DATA_FOLDER, "settings.json")
     try:
         with open(settings_path, "r") as f:
-            return json.load(f)
+            settings = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"model": config.CLAUDE_MODEL}
+        settings = {}
+    if settings.get("model") not in config.AVAILABLE_MODELS:
+        settings["model"] = config.CLAUDE_MODEL
+    return settings
 
 
 def _save_settings(settings):

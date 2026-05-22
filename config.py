@@ -6,7 +6,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-sonnet-4-6"  # default; changeable in admin UI
 AVAILABLE_MODELS = {
     "claude-sonnet-4-6": "Sonnet 4.6 (Fast, $0.10-0.30/review)",
-    "claude-opus-4-6": "Opus 4.6 (Best quality, $0.50-1.50/review)",
+    "claude-opus-4-7": "Opus 4.7 (Best quality, $0.50-1.50/review)",
 }
 
 REFERENCE_CONTRACTS_FOLDER = os.path.join(BASE_DIR, "data", "reference_contracts")
