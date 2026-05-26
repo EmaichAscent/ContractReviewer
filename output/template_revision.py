@@ -207,6 +207,39 @@ def _apply_revisions_to_template(template_path, output_path, revisions, client_n
 # ---------------------------------------------------------------------------
 
 
+def _split_into_paragraphs(text):
+    """Split insertion text on double-newline boundaries into paragraph chunks.
+    Collapses internal single newlines into spaces so the LLM can format with
+    \n\n between sub-sections without smuggling in stray line breaks."""
+    parts = [p.strip() for p in (text or "").split("\n\n")]
+    cleaned = []
+    for p in parts:
+        if not p:
+            continue
+        # Collapse single \n inside a chunk into a space — single newlines from
+        # the LLM aren't intentional paragraph breaks.
+        cleaned.append(" ".join(line.strip() for line in p.split("\n") if line.strip()))
+    return cleaned
+
+
+def _make_ins_paragraph(text, rev_id, date_str, base_rpr=None):
+    """Construct a fresh <w:p> containing a tracked-insertion of `text`."""
+    p = etree.Element(f"{{{WORD_NS}}}p")
+    ins_elem = _make_element("ins", {
+        f"{{{WORD_NS}}}id": str(rev_id),
+        f"{{{WORD_NS}}}author": AUTHOR,
+        f"{{{WORD_NS}}}date": date_str,
+    })
+    run = etree.SubElement(ins_elem, f"{{{WORD_NS}}}r")
+    if base_rpr is not None:
+        run.append(copy.deepcopy(base_rpr))
+    t = etree.SubElement(run, f"{{{WORD_NS}}}t")
+    t.set(f"{{{XML_NS}}}space", "preserve")
+    t.text = text
+    p.append(ins_elem)
+    return p
+
+
 def _apply_insert(root, after_text, new_text, rev_id, date_str, comment_id=None):
     if after_text:
         anchor_para = _find_paragraph_containing(root, after_text)
@@ -218,33 +251,32 @@ def _apply_insert(root, after_text, new_text, rev_id, date_str, comment_id=None)
     if anchor_para is None:
         return False, rev_id
 
-    new_para = etree.Element(f"{{{WORD_NS}}}p")
+    chunks = _split_into_paragraphs(new_text) or [new_text]
 
-    if comment_id is not None:
-        crs = etree.SubElement(new_para, f"{{{WORD_NS}}}commentRangeStart")
+    # Build one tracked-insert paragraph per chunk and chain them after anchor.
+    created = []
+    current = anchor_para
+    for chunk in chunks:
+        new_p = _make_ins_paragraph(chunk, rev_id, date_str)
+        rev_id += 1
+        current.addnext(new_p)
+        current = new_p
+        created.append(new_p)
+
+    # Comment range spans first → last new paragraph.
+    if comment_id is not None and created:
+        first = created[0]
+        crs = etree.Element(f"{{{WORD_NS}}}commentRangeStart")
         crs.set(f"{{{WORD_NS}}}id", str(comment_id))
+        first.insert(0, crs)
 
-    ins_elem = _make_element("ins", {
-        f"{{{WORD_NS}}}id": str(rev_id),
-        f"{{{WORD_NS}}}author": AUTHOR,
-        f"{{{WORD_NS}}}date": date_str,
-    })
-    rev_id += 1
-
-    new_run = etree.SubElement(ins_elem, f"{{{WORD_NS}}}r")
-    new_t = etree.SubElement(new_run, f"{{{WORD_NS}}}t")
-    new_t.set(f"{{{XML_NS}}}space", "preserve")
-    new_t.text = new_text
-    new_para.append(ins_elem)
-
-    if comment_id is not None:
-        cre = etree.SubElement(new_para, f"{{{WORD_NS}}}commentRangeEnd")
+        last = created[-1]
+        cre = etree.SubElement(last, f"{{{WORD_NS}}}commentRangeEnd")
         cre.set(f"{{{WORD_NS}}}id", str(comment_id))
-        cref_run = etree.SubElement(new_para, f"{{{WORD_NS}}}r")
+        cref_run = etree.SubElement(last, f"{{{WORD_NS}}}r")
         cref = etree.SubElement(cref_run, f"{{{WORD_NS}}}commentReference")
         cref.set(f"{{{WORD_NS}}}id", str(comment_id))
 
-    anchor_para.addnext(new_para)
     return True, rev_id
 
 
@@ -282,24 +314,39 @@ def _apply_replace(root, original_text, new_text, rev_id, date_str, comment_id=N
         del_elem.append(run)
     para.append(del_elem)
 
-    ins_elem = _make_element("ins", {
-        f"{{{WORD_NS}}}id": str(rev_id),
-        f"{{{WORD_NS}}}author": AUTHOR,
-        f"{{{WORD_NS}}}date": date_str,
-    })
-    rev_id += 1
-    new_run = etree.SubElement(ins_elem, f"{{{WORD_NS}}}r")
-    if first_rpr is not None:
-        new_run.append(first_rpr)
-    new_t = etree.SubElement(new_run, f"{{{WORD_NS}}}t")
-    new_t.set(f"{{{XML_NS}}}space", "preserve")
-    new_t.text = new_text
-    para.append(ins_elem)
+    chunks = _split_into_paragraphs(new_text) or [new_text]
+
+    if len(chunks) == 1:
+        # Single-paragraph replacement: insert in same para right after deletion
+        ins_elem = _make_element("ins", {
+            f"{{{WORD_NS}}}id": str(rev_id),
+            f"{{{WORD_NS}}}author": AUTHOR,
+            f"{{{WORD_NS}}}date": date_str,
+        })
+        rev_id += 1
+        new_run = etree.SubElement(ins_elem, f"{{{WORD_NS}}}r")
+        if first_rpr is not None:
+            new_run.append(first_rpr)
+        new_t = etree.SubElement(new_run, f"{{{WORD_NS}}}t")
+        new_t.set(f"{{{XML_NS}}}space", "preserve")
+        new_t.text = chunks[0]
+        para.append(ins_elem)
+        last_para = para
+    else:
+        # Multi-paragraph replacement: deletion stays in original para,
+        # each new chunk becomes its own paragraph after.
+        current = para
+        for chunk in chunks:
+            new_p = _make_ins_paragraph(chunk, rev_id, date_str, base_rpr=first_rpr)
+            rev_id += 1
+            current.addnext(new_p)
+            current = new_p
+        last_para = current
 
     if comment_id is not None:
-        cre = etree.SubElement(para, f"{{{WORD_NS}}}commentRangeEnd")
+        cre = etree.SubElement(last_para, f"{{{WORD_NS}}}commentRangeEnd")
         cre.set(f"{{{WORD_NS}}}id", str(comment_id))
-        cref_run = etree.SubElement(para, f"{{{WORD_NS}}}r")
+        cref_run = etree.SubElement(last_para, f"{{{WORD_NS}}}r")
         cref = etree.SubElement(cref_run, f"{{{WORD_NS}}}commentReference")
         cref.set(f"{{{WORD_NS}}}id", str(comment_id))
 
@@ -407,11 +454,15 @@ def _write_comments_part(temp_dir, comments):
         comment_el.set(f"{{{WORD_NS}}}initials", c["initials"])
         comment_el.set(f"{{{WORD_NS}}}date", c["date"])
 
-        # Split body into paragraphs (preserve line breaks as separate w:p elements)
+        # Split body into paragraphs (preserve line breaks as separate w:p elements).
+        # First line is the "✦ CAM Leadership Review Note" header — bold it for emphasis.
         body_lines = (c["text"] or "").split("\n")
-        for line in body_lines:
+        for i, line in enumerate(body_lines):
             p = etree.SubElement(comment_el, f"{{{WORD_NS}}}p")
             r = etree.SubElement(p, f"{{{WORD_NS}}}r")
+            if i == 0:
+                rpr = etree.SubElement(r, f"{{{WORD_NS}}}rPr")
+                etree.SubElement(rpr, f"{{{WORD_NS}}}b")
             t = etree.SubElement(r, f"{{{WORD_NS}}}t")
             t.set(f"{{{XML_NS}}}space", "preserve")
             t.text = line
@@ -494,7 +545,9 @@ def _format_comment_body(revision):
             "recommendation": "CAM Leadership Recommendation",
         }.get(source_raw, "CAM Leadership Recommendation")
 
-    lines = ["\U0001F4CC CAM Leadership Review Note"]
+    # ✦ (U+2726) — BMP-safe marker. The original 📌 (U+1F4CC) is supplementary
+    # plane and rendered as garbage in some Word fonts.
+    lines = ["✦ CAM Leadership Review Note"]
     lines.append(f"Source: {source_label}")
     purpose = revision.get("purpose")
     if purpose:
@@ -513,10 +566,48 @@ def _format_comment_body(revision):
     return "\n".join(lines)
 
 
+def _is_already_modified(para):
+    """A paragraph that already contains <w:ins> or <w:del> has been rewritten
+    by a previous revision in this run. Re-matching it via fuzzy search creates
+    orphaned comment markers and unreadable nested redline blocks."""
+    return (para.find(f"{{{WORD_NS}}}ins") is not None
+            or para.find(f"{{{WORD_NS}}}del") is not None)
+
+
+def _is_toc_paragraph(para):
+    """Skip TOC and other auto-generated paragraphs so insertions don't land in
+    the table of contents. TOC entries live inside <w:sdt>/<w:sdtContent> and
+    typically use a paragraph style starting with 'TOC' or 'Contents'."""
+    parent = para.getparent()
+    while parent is not None:
+        local = etree.QName(parent.tag).localname
+        if local in ("sdt", "sdtContent"):
+            return True
+        parent = parent.getparent()
+    pPr = para.find(f"{{{WORD_NS}}}pPr")
+    if pPr is not None:
+        pStyle = pPr.find(f"{{{WORD_NS}}}pStyle")
+        if pStyle is not None:
+            style_val = pStyle.get(f"{{{WORD_NS}}}val", "") or ""
+            if style_val.startswith("TOC") or style_val.lower() == "contents":
+                return True
+    return False
+
+
 def _find_paragraph_containing(root, search_text):
     if not search_text:
         return None
-    paragraphs = root.findall(f".//{{{WORD_NS}}}p")
+    all_paragraphs = root.findall(f".//{{{WORD_NS}}}p")
+    # Filter out TOC paragraphs and ones already modified by prior revisions
+    # in this run. Without this, fuzzy matching latches onto TOC headings or
+    # re-targets the same paragraph multiple times — producing both the
+    # "STATUTORY COMPLIANCE wall inserted into the TOC" bug and the
+    # orphan-comment-numbering bug.
+    paragraphs = [p for p in all_paragraphs
+                  if not _is_toc_paragraph(p) and not _is_already_modified(p)]
+    if not paragraphs:
+        return None
+
     for frag_len in [80, 60, 40, 25]:
         frag = search_text[:frag_len].strip()
         if not frag:
