@@ -126,6 +126,31 @@
             </section>
             {% endif %}
 
+            {% if template_strengths %}
+            <section class="gap-analysis-section">
+                <h2>Template Strengths — Where the Master Template Beats This Client</h2>
+                <p class="help-text">Language the firm's template already handles well that is missing or weakened in the client contract. No action needed on the template; these are points to raise during client negotiation.</p>
+                <table class="gap-analysis-table">
+                    <thead>
+                        <tr>
+                            <th style="width:25%">Template Section</th>
+                            <th style="width:40%">What the Template Handles</th>
+                            <th style="width:35%">Client Gap</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in template_strengths %}
+                        <tr>
+                            <td><strong>{{ s.template_section or "—" }}</strong></td>
+                            <td>{{ s.template_summary or "—" }}</td>
+                            <td>{{ s.client_gap or "—" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
+            {% endif %}
+
             {% if statute_concerns %}
             <section class="statute-section">
                 <h2>Statutory Compliance Notes</h2>

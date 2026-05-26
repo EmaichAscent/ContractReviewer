@@ -479,24 +479,35 @@ def _register_comments_content_type(temp_dir):
 
 
 def _format_comment_body(revision):
-    """Build the Word comment text from a revision's metadata."""
-    source_label = {
-        "client_contract": "Client Contract",
-        "statute": "State Statute",
-        "recommendation": "CAM Leadership Recommendation",
-    }.get((revision.get("source") or "").lower(), "CAM Leadership Recommendation")
+    """Build the Word comment text in the exact CAM Leadership Review Note
+    format. Header line + Source / Purpose / Statute Reference / Action.
+    Client quote (if the change is sourced from the client contract) is
+    appended as an additional context line."""
+    source_raw = (revision.get("source") or "").lower()
+    if source_raw == "statute" and revision.get("statute_ref"):
+        # When the source IS a statute, the source label IS the statute citation
+        source_label = revision["statute_ref"]
+    else:
+        source_label = {
+            "client_contract": "Client Contract",
+            "statute": "State Statute",
+            "recommendation": "CAM Leadership Recommendation",
+        }.get(source_raw, "CAM Leadership Recommendation")
 
-    lines = [f"CAM Leadership Review Note"]
+    lines = ["\U0001F4CC CAM Leadership Review Note"]
     lines.append(f"Source: {source_label}")
     purpose = revision.get("purpose")
     if purpose:
         lines.append(f"Purpose: {purpose}")
     statute_ref = revision.get("statute_ref")
-    if statute_ref:
+    if statute_ref and source_raw != "statute":
+        # Surface statute reference separately if the source label isn't already it
         lines.append(f"Statute Reference: {statute_ref}")
+    action = revision.get("action")
+    if action:
+        lines.append(f"Action: {action}")
     client_quote = revision.get("client_quote")
     if client_quote:
-        # Truncate long client quotes so the comment stays readable
         snippet = client_quote if len(client_quote) <= 350 else client_quote[:350] + "..."
         lines.append(f'Client Language: "{snippet}"')
     return "\n".join(lines)

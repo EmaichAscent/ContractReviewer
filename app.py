@@ -276,6 +276,8 @@ def results(job_id):
         statute_concerns=analysis.get("statute_concerns", []),
         recommendation=analysis.get("overall_recommendation", ""),
         gap_analysis=analysis.get("gap_analysis", []),
+        template_strengths=analysis.get("template_strengths", []),
+        exec_summary=analysis.get("executive_summary") or {},
         usage=usage,
         artifact_states={
             kind: _artifact_status(job_id, kind) for kind in ARTIFACT_FILES

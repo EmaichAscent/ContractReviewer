@@ -197,12 +197,59 @@ def generate_executive_summary_pdf(analysis_results, client_name, output_path, j
     else:
         elements.append(Paragraph("No significant concerns identified.", styles['ExBody']))
 
-    # Recommendation
-    recommendation = analysis_results.get("overall_recommendation", "")
-    if recommendation and not recommendation.startswith('{') and len(recommendation) < 500:
-        elements.append(Spacer(1, 8))
-        elements.append(Paragraph("Recommendation", styles['ExSection']))
-        elements.append(Paragraph(recommendation, styles['ExBody']))
+    # Structured executive summary (from analysis JSON's executive_summary
+    # object — the five-section format the firm specified).
+    exec_summary = analysis_results.get("executive_summary") or {}
+    if exec_summary and isinstance(exec_summary, dict):
+        # Risk Rating
+        risk_rating = (exec_summary.get("risk_rating") or "").strip()
+        risk_justification = (exec_summary.get("risk_justification") or "").strip()
+        if risk_rating or risk_justification:
+            elements.append(Spacer(1, 8))
+            elements.append(Paragraph("Overall Risk Rating", styles['ExSection']))
+            if risk_rating:
+                rating_color = {
+                    "low": GREEN, "moderate": AMBER, "high": RED,
+                }.get(risk_rating.lower(), NAVY)
+                elements.append(Paragraph(
+                    f'<font size="13" color="{rating_color.hexval()}"><b>{risk_rating} Risk</b></font>',
+                    styles['ExBody']
+                ))
+            if risk_justification:
+                elements.append(Paragraph(risk_justification, styles['ExBody']))
+
+        # Top 5 Priority Revisions
+        priorities = exec_summary.get("top_priorities") or []
+        if isinstance(priorities, list) and priorities:
+            elements.append(Spacer(1, 6))
+            elements.append(Paragraph("Top 5 Priority Revisions", styles['ExSection']))
+            for i, item in enumerate(priorities[:5], start=1):
+                if isinstance(item, str) and item.strip():
+                    elements.append(Paragraph(
+                        f'<b>{i}.</b> {item.strip()}', styles['ExBullet']
+                    ))
+
+        # Statutory Compliance Summary
+        statute_summary = (exec_summary.get("statutory_compliance_summary") or "").strip()
+        if statute_summary:
+            elements.append(Spacer(1, 6))
+            elements.append(Paragraph("Statutory Compliance Summary", styles['ExSection']))
+            elements.append(Paragraph(statute_summary, styles['ExBody']))
+
+        # Recommended Next Steps
+        next_steps = (exec_summary.get("recommended_next_steps") or "").strip()
+        if next_steps:
+            elements.append(Spacer(1, 6))
+            elements.append(Paragraph("Recommended Next Steps", styles['ExSection']))
+            elements.append(Paragraph(next_steps, styles['ExBody']))
+    else:
+        # Fallback for older analyses that don't carry the executive_summary
+        # object yet — render the prior recommendation paragraph if short.
+        recommendation = analysis_results.get("overall_recommendation", "")
+        if recommendation and not recommendation.startswith('{') and len(recommendation) < 500:
+            elements.append(Spacer(1, 8))
+            elements.append(Paragraph("Recommendation", styles['ExSection']))
+            elements.append(Paragraph(recommendation, styles['ExBody']))
 
     # Footer
     elements.append(Spacer(1, 16))
