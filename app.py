@@ -699,6 +699,21 @@ def admin_reference_delete():
     return redirect(url_for("admin"))
 
 
+@app.route("/admin/template/download")
+def admin_template_download():
+    """Serve the current master template so the user can edit it and re-upload.
+    Needed because Railway's persistent volume isn't directly browsable."""
+    path = config.IDEAL_TEMPLATE_PATH
+    if not os.path.exists(path):
+        flash("No master template is currently uploaded.", "error")
+        return redirect(url_for("admin"))
+    settings = _load_settings()
+    name = settings.get("ideal_template_name") or os.path.basename(path)
+    if not name.lower().endswith(".docx"):
+        name += ".docx"
+    return send_file(path, as_attachment=True, download_name=name)
+
+
 @app.route("/admin/template/replace", methods=["POST"])
 def admin_template_replace():
     file = request.files.get("template")
