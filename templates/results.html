@@ -38,6 +38,7 @@
                 <div class="hero-divider"></div>
                 <div class="hero-bars">
                     {% for cat_name, cat_data in categories.items() %}
+                    {% if not (scorecard_only and cat_name == 'Statutory Compliance') %}
                     {% set cat_pct = (cat_data.score * 100) | round | int %}
                     <div class="score-bar-item">
                         <div class="score-bar-label">
@@ -48,11 +49,12 @@
                             <div class="score-bar-fill {{ 'good' if cat_data.score >= 0.7 else 'warn' if cat_data.score >= 0.4 else 'bad' }}" style="width: {{ cat_pct }}%"></div>
                         </div>
                     </div>
+                    {% endif %}
                     {% endfor %}
                 </div>
             </section>
 
-            {% if recommendation %}
+            {% if recommendation and not scorecard_only %}
             <section class="recommendation-section">
                 <h2>Overall Recommendation</h2>
                 <p>{{ recommendation }}</p>
@@ -61,6 +63,7 @@
 
             <!-- Per-category breakdown -->
             {% for cat_name, cat_data in categories.items() %}
+            {% if not (scorecard_only and cat_name == 'Statutory Compliance') %}
             <section class="category-card">
                 <div class="category-header">
                     <h3>{{ cat_name }}</h3>
@@ -99,9 +102,10 @@
                     {% endfor %}
                 </div>
             </section>
+            {% endif %}
             {% endfor %}
 
-            {% if gap_analysis %}
+            {% if gap_analysis and not scorecard_only %}
             <section class="gap-analysis-section">
                 <h2>Gap Analysis — Client Language Worth Importing</h2>
                 <p class="help-text">Language in this client's contract that strengthens manager protection but is not present in the firm's master template.</p>
@@ -129,7 +133,7 @@
             </section>
             {% endif %}
 
-            {% if template_strengths %}
+            {% if template_strengths and not scorecard_only %}
             <section class="gap-analysis-section">
                 <h2>Template Strengths — Where the Master Template Beats This Client</h2>
                 <p class="help-text">Language the firm's template already handles well that is missing or weakened in the client contract. No action needed on the template; these are points to raise during client negotiation.</p>
@@ -154,7 +158,7 @@
             </section>
             {% endif %}
 
-            {% if statute_concerns %}
+            {% if statute_concerns and not scorecard_only %}
             <section class="statute-section">
                 <h2>Statutory Compliance Notes</h2>
                 <ul>

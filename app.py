@@ -980,10 +980,17 @@ def _run_analysis(job_id):
         # standalone revisions document are generated on demand from the results page.
         job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
         scorecard_path = os.path.join(job_dir, "scorecard.docx")
-        generate_scorecard(analysis, job["client_name"], scorecard_path, jurisdiction)
+        scorecard_only = bool(job.get("scorecard_only"))
+        generate_scorecard(
+            analysis, job["client_name"], scorecard_path, jurisdiction,
+            scorecard_only=scorecard_only,
+        )
         scorecard_pdf_path = os.path.join(job_dir, "scorecard.pdf")
         try:
-            generate_scorecard_pdf(analysis, job["client_name"], scorecard_pdf_path, jurisdiction)
+            generate_scorecard_pdf(
+                analysis, job["client_name"], scorecard_pdf_path, jurisdiction,
+                scorecard_only=scorecard_only,
+            )
         except Exception as e:
             print(f"PDF generation error: {e}")
 
