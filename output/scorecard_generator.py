@@ -1,10 +1,13 @@
 """Generate polished client-ready scorecard as .docx."""
 
+import os
+
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
 from datetime import datetime
+
+import config
 
 
 def generate_scorecard(analysis_results, client_name, output_path, jurisdiction=None):
@@ -23,6 +26,9 @@ def generate_scorecard(analysis_results, client_name, output_path, jurisdiction=
     font = style.font
     font.name = "Calibri"
     font.size = Pt(11)
+
+    # Brand logo at top of document
+    _add_logo(doc)
 
     # Title
     title = doc.add_heading("CONTRACT REVIEW SCORECARD", level=0)
@@ -51,71 +57,16 @@ def generate_scorecard(analysis_results, client_name, output_path, jurisdiction=
 
     doc.add_paragraph()
 
-    # Score summary table
-    table = doc.add_table(rows=1, cols=3)
-    table.style = "Light Grid Accent 1"
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    hdr_cells = table.rows[0].cells
-    hdr_cells[0].text = "Evaluation Area"
-    hdr_cells[1].text = "Score"
-    hdr_cells[2].text = "Rating"
-
-    # Bold the header row
-    for cell in hdr_cells:
-        for paragraph in cell.paragraphs:
-            for run in paragraph.runs:
-                run.bold = True
-
+    # Section summaries (no category table, no per-criterion tables)
     categories = analysis_results.get("categories", {})
-    for cat_name, cat_data in categories.items():
-        score = cat_data.get("score", 0)
-        row = table.add_row()
-        row.cells[0].text = cat_name
-        row.cells[1].text = f"{round(score * 100)}%"
-        row.cells[2].text = _score_rating(score)
-
-    doc.add_paragraph()
-
-    # Detailed evaluation for each category
-    doc.add_heading("Evaluation Details", level=1)
-    doc.add_paragraph()
-
     for cat_name, cat_data in categories.items():
         score = cat_data.get("score", 0)
         heading = doc.add_heading(f"{cat_name} — {round(score * 100)}%", level=2)
         _color_heading(heading, _score_color(score))
 
-        # Category summary
         summary = cat_data.get("summary", "")
         if summary:
             doc.add_paragraph(summary)
-
-        # Individual criteria results
-        criteria = cat_data.get("criteria", {})
-        if criteria:
-            crit_table = doc.add_table(rows=1, cols=3)
-            crit_table.style = "Light List Accent 1"
-            hdr = crit_table.rows[0].cells
-            hdr[0].text = "Criterion"
-            hdr[1].text = "Score"
-            hdr[2].text = "Notes"
-            for cell in hdr:
-                for p in cell.paragraphs:
-                    for r in p.runs:
-                        r.bold = True
-
-            for crit_id, crit_result in criteria.items():
-                if isinstance(crit_result, dict):
-                    row = crit_table.add_row()
-                    # Use the criterion name or ID
-                    crit_name = crit_id.replace("_", " ").replace("profit ", "").replace("empower ", "").replace("risk ", "").replace("board ", "").replace("value ", "").title()
-                    row.cells[0].text = crit_name
-                    crit_score = crit_result.get("score", 0)
-                    row.cells[1].text = f"{crit_score}/2"
-                    explanation = crit_result.get("explanation", "")
-                    if len(explanation) > 200:
-                        explanation = explanation[:197] + "..."
-                    row.cells[2].text = explanation
 
         doc.add_paragraph()
 
@@ -151,6 +102,21 @@ def generate_scorecard(analysis_results, client_name, output_path, jurisdiction=
     return output_path
 
 
+def _add_logo(doc):
+    """Insert CAM Leadership Institute logo at the top of the document."""
+    logo_path = getattr(config, "LOGO_PATH", None) or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets",
+        "cam-leadership-institute-logo.png",
+    )
+    if not os.path.exists(logo_path):
+        return
+    para = doc.add_paragraph()
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = para.add_run()
+    run.add_picture(logo_path, width=Inches(2.25))
+
+
 def _score_color(score):
     """Return RGB color based on score."""
     if score >= 0.7:
@@ -159,18 +125,6 @@ def _score_color(score):
         return RGBColor(204, 153, 0)  # Amber
     else:
         return RGBColor(192, 0, 0)  # Red
-
-
-def _score_rating(score):
-    """Return text rating based on score."""
-    if score >= 0.8:
-        return "Strong"
-    elif score >= 0.6:
-        return "Adequate"
-    elif score >= 0.4:
-        return "Needs Improvement"
-    else:
-        return "Weak"
 
 
 def _color_heading(heading, color):

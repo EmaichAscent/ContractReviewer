@@ -126,7 +126,7 @@ def load_prompts():
     return merged
 
 
-def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None, pdf_attachments=None, progress_fn=None):
+def analyze_contract(contract_text, ideal_template_text, statutes_context="", jurisdiction=None, model=None, log_fn=None, pdf_attachments=None, progress_fn=None, include_revisions=True):
     """Analyze a contract against the ideal template and scoring criteria.
 
     Args:
@@ -144,6 +144,8 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
         progress_fn: optional callback function(phase, chars_so_far) called as
             text streams in from Claude. Lets the caller update a progress bar
             and status message in real time. Phase is "analysis" or "revisions".
+        include_revisions: when False (scorecard-only mode), skip the second
+            LLM call that produces track-change revision text.
 
     Returns:
         dict with analysis results including scores, explanations, and revisions
@@ -281,26 +283,32 @@ Please analyze the contract and return your complete analysis as JSON."""
         "model": model,
     }
 
-    # Now get specific revision suggestions
-    weak_count = 0
-    for cat_data in analysis.get("categories", {}).values():
-        for crit_result in cat_data.get("criteria", {}).values():
-            if isinstance(crit_result, dict) and crit_result.get("score", 2) < 2:
-                weak_count += 1
+    # Optionally get specific revision suggestions (skipped in scorecard-only mode)
+    if include_revisions:
+        weak_count = 0
+        for cat_data in analysis.get("categories", {}).values():
+            for crit_result in cat_data.get("criteria", {}).values():
+                if isinstance(crit_result, dict) and crit_result.get("score", 2) < 2:
+                    weak_count += 1
 
-    if weak_count > 0:
-        log(f"Found {weak_count} criteria scoring below threshold — requesting revision suggestions...")
+        if weak_count > 0:
+            log(f"Found {weak_count} criteria scoring below threshold — requesting revision suggestions...")
+        else:
+            log("All criteria scored well — skipping revision request")
+
+        revisions, rev_usage = _get_revisions(
+            client, system_prompt, prompts, contract_text, analysis, model,
+            log_fn=log_fn, pdf_attachments=pdf_attachments, progress_fn=progress_fn,
+        )
+        analysis["revisions"] = revisions
+        usage["revision_input_tokens"] = rev_usage.get("input_tokens", 0)
+        usage["revision_output_tokens"] = rev_usage.get("output_tokens", 0)
     else:
-        log("All criteria scored well — skipping revision request")
+        log("Scorecard-only mode — skipping revision suggestions LLM call")
+        analysis["revisions"] = []
+        usage["revision_input_tokens"] = 0
+        usage["revision_output_tokens"] = 0
 
-    revisions, rev_usage = _get_revisions(
-        client, system_prompt, prompts, contract_text, analysis, model,
-        log_fn=log_fn, pdf_attachments=pdf_attachments, progress_fn=progress_fn,
-    )
-    analysis["revisions"] = revisions
-
-    usage["revision_input_tokens"] = rev_usage.get("input_tokens", 0)
-    usage["revision_output_tokens"] = rev_usage.get("output_tokens", 0)
     usage["total_input_tokens"] = usage["analysis_input_tokens"] + usage["revision_input_tokens"]
     usage["total_output_tokens"] = usage["analysis_output_tokens"] + usage["revision_output_tokens"]
     usage["estimated_cost"] = _estimate_cost(model, usage["total_input_tokens"], usage["total_output_tokens"])

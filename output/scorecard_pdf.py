@@ -1,15 +1,19 @@
 """Generate professional PDF scorecard using ReportLab."""
 
+import os
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    HRFlowable, KeepTogether
+    HRFlowable, Image, KeepTogether,
 )
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 from datetime import datetime
+
+import config
 
 
 # Colors
@@ -19,6 +23,15 @@ AMBER = colors.HexColor('#cc9900')
 RED = colors.HexColor('#c00000')
 LIGHT_GRAY = colors.HexColor('#f0f4f8')
 BORDER_GRAY = colors.HexColor('#dee2e6')
+
+
+def _logo_path():
+    path = getattr(config, "LOGO_PATH", None) or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets",
+        "cam-leadership-institute-logo.png",
+    )
+    return path if os.path.exists(path) else None
 
 
 def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdiction=None):
@@ -58,21 +71,16 @@ def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdict
         'SmallText', parent=styles['Normal'],
         fontSize=8, textColor=colors.gray, alignment=TA_CENTER,
     ))
-    styles.add(ParagraphStyle(
-        'CritName', parent=styles['Normal'],
-        fontSize=10, textColor=NAVY, leading=12,
-    ))
-    styles.add(ParagraphStyle(
-        'CritDetail', parent=styles['Normal'],
-        fontSize=9, textColor=colors.HexColor('#555555'), leading=12, leftIndent=10,
-    ))
-    styles.add(ParagraphStyle(
-        'Revision', parent=styles['Normal'],
-        fontSize=9, textColor=colors.HexColor('#856404'), leading=12,
-        leftIndent=10, backColor=colors.HexColor('#fff3cd'),
-    ))
 
     elements = []
+
+    # Brand logo at top of first page
+    logo = _logo_path()
+    if logo:
+        img = Image(logo, width=2.25 * inch, height=2.25 * inch * (398 / 1458))
+        img.hAlign = 'CENTER'
+        elements.append(img)
+        elements.append(Spacer(1, 10))
 
     # Title
     elements.append(Paragraph("CONTRACT REVIEW SCORECARD", styles['Title2']))
@@ -120,97 +128,21 @@ def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdict
     elements.append(score_table)
     elements.append(Spacer(1, 16))
 
-    # Category Score Summary Table
+    # Section summaries only (no category summary table, no per-criterion details)
     categories = analysis_results.get("categories", {})
-    summary_data = [
-        [Paragraph('<b>Evaluation Area</b>', styles['CritName']),
-         Paragraph('<b>Score</b>', styles['CritName']),
-         Paragraph('<b>Rating</b>', styles['CritName'])]
-    ]
-    for cat_name, cat_data in categories.items():
-        score = cat_data.get("score", 0)
-        pct = round(score * 100)
-        sc = GREEN if score >= 0.7 else AMBER if score >= 0.4 else RED
-        if score >= 0.8:
-            r = "Strong"
-        elif score >= 0.6:
-            r = "Adequate"
-        elif score >= 0.4:
-            r = "Needs Improvement"
-        else:
-            r = "Weak"
-        summary_data.append([
-            Paragraph(cat_name, styles['BodyText2']),
-            Paragraph(f'<font color="{sc.hexval()}"><b>{pct}%</b></font>', styles['BodyText2']),
-            Paragraph(r, styles['BodyText2']),
-        ])
-
-    summary_table = Table(summary_data, colWidths=[3 * inch, 1.5 * inch, 2 * inch])
-    summary_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), NAVY),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('TOPPADDING', (0, 0), (-1, 0), 8),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_GRAY),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, LIGHT_GRAY]),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 1), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
-    ]))
-    elements.append(summary_table)
-    elements.append(Spacer(1, 20))
-
-    # Detailed Category Sections
-    elements.append(Paragraph("Evaluation Details", styles['SectionHead']))
-    elements.append(HRFlowable(width="100%", thickness=1, color=BORDER_GRAY, spaceAfter=8))
-
     for cat_name, cat_data in categories.items():
         score = cat_data.get("score", 0)
         sc = GREEN if score >= 0.7 else AMBER if score >= 0.4 else RED
-        cat_elements = []
-
-        cat_elements.append(Paragraph(
-            f'{cat_name} — <font color="{sc.hexval()}">{round(score * 100)}%</font>',
-            styles['CatHead']
-        ))
-
+        cat_elements = [
+            Paragraph(
+                f'{cat_name} — <font color="{sc.hexval()}">{round(score * 100)}%</font>',
+                styles['CatHead']
+            )
+        ]
         summary = cat_data.get("summary", "")
         if summary:
             cat_elements.append(Paragraph(summary, styles['BodyText2']))
-
-        criteria = cat_data.get("criteria", {})
-        for crit_id, crit in criteria.items():
-            if not isinstance(crit, dict):
-                continue
-            crit_score = crit.get("score", 0)
-            if crit_score == 2:
-                badge = '<font color="#155724" backColor="#d4edda">&nbsp;STRONG&nbsp;</font>'
-            elif crit_score == 1:
-                badge = '<font color="#856404" backColor="#fff3cd">&nbsp;WEAK&nbsp;</font>'
-            else:
-                badge = '<font color="#721c24" backColor="#f8d7da">&nbsp;MISSING&nbsp;</font>'
-
-            clean_name = crit_id.replace('profit_', '').replace('empower_', '').replace(
-                'risk_', '').replace('board_', '').replace('value_', '').replace('_', ' ').title()
-
-            cat_elements.append(Paragraph(
-                f'{badge} &nbsp; <b>{clean_name}</b>', styles['CritName']
-            ))
-            if crit.get("explanation"):
-                cat_elements.append(Paragraph(crit["explanation"], styles['CritDetail']))
-            if crit.get("suggested_revision") and crit_score < 2:
-                rev_text = crit["suggested_revision"]
-                if len(rev_text) > 300:
-                    rev_text = rev_text[:297] + "..."
-                cat_elements.append(Paragraph(
-                    f'<b>Recommended:</b> {rev_text}', styles['Revision']
-                ))
-            cat_elements.append(Spacer(1, 4))
-
-        elements.append(KeepTogether(cat_elements[:3]))  # Keep header + summary together
-        elements.extend(cat_elements[3:] if len(cat_elements) > 3 else [])
+        elements.append(KeepTogether(cat_elements))
         elements.append(Spacer(1, 8))
 
     # Statute Concerns
