@@ -71,6 +71,7 @@ def _persist_job(job_id):
         "error": job.get("error"),
         "has_results": bool(job.get("results")),
         "primary_docx_filename": job.get("primary_docx_filename"),
+        "scorecard_only": bool(job.get("scorecard_only")),
     }
     job_state_path = os.path.join(config.RESULTS_FOLDER, job_id, "job_state.json")
     try:
@@ -92,11 +93,13 @@ def _recover_job(job_id):
                 results = json.load(f)
             client_name = "Unknown"
             primary_docx_filename = None
+            scorecard_only = False
             if os.path.exists(job_state_path):
                 with open(job_state_path) as f:
                     state = json.load(f)
                 client_name = state.get("client_name", "Unknown")
                 primary_docx_filename = state.get("primary_docx_filename")
+                scorecard_only = bool(state.get("scorecard_only"))
             # Fall back to the analysis file's mtime if no stored date — keeps
             # old jobs (predating job_state.json) renderable.
             try:
@@ -112,6 +115,7 @@ def _recover_job(job_id):
                 "status_message": "Review complete!",
                 "results": results,
                 "primary_docx_filename": primary_docx_filename,
+                "scorecard_only": scorecard_only,
                 "date": date_str,
                 "jurisdiction": results.get("jurisdiction") if isinstance(results.get("jurisdiction"), dict) else None,
             }
@@ -151,6 +155,9 @@ def upload():
 
     client_name = request.form.get("client_name", "Unknown Client")
     state_override = request.form.get("state", "")
+    # Default remains full review; checkbox/radio value "1" or "true" selects scorecard-only
+    review_mode = (request.form.get("review_mode") or "full").strip().lower()
+    scorecard_only = review_mode in ("scorecard", "scorecard_only", "1", "true", "yes")
 
     # Save uploaded files
     job_id = str(uuid.uuid4())[:8]
@@ -175,6 +182,7 @@ def upload():
         "client_name": client_name,
         "state_override": state_override,
         "upload_paths": upload_paths,
+        "scorecard_only": scorecard_only,
         "status": "processing",
         "progress": 0,
         "status_message": "Starting analysis...",
@@ -283,6 +291,7 @@ def results(job_id):
             kind: _artifact_status(job_id, kind) for kind in ARTIFACT_FILES
         },
         has_primary_docx=bool(job.get("primary_docx_filename")),
+        scorecard_only=bool(job.get("scorecard_only")),
     )
 
 
@@ -416,6 +425,10 @@ _ARTIFACT_GENERATORS = {
 }
 
 
+# Artifacts that require revision / redline work — unavailable in scorecard-only mode
+_REDLINE_ARTIFACTS = {"marked", "template-edition", "revisions"}
+
+
 @app.route("/generate/<job_id>/<kind>", methods=["POST"])
 def generate_artifact(job_id, kind):
     if kind not in _ARTIFACT_GENERATORS:
@@ -424,6 +437,12 @@ def generate_artifact(job_id, kind):
     job = jobs.get(job_id) or _recover_job(job_id)
     if not job:
         return jsonify({"status": "error", "error": "Job not found"}), 404
+
+    if job.get("scorecard_only") and kind in _REDLINE_ARTIFACTS:
+        return jsonify({
+            "status": "error",
+            "error": "Unavailable for scorecard-only reviews. Re-run with full review to generate redlines.",
+        }), 403
 
     current = _artifact_status(job_id, kind)
     if current["status"] in ("ready", "generating"):
@@ -918,6 +937,7 @@ def _run_analysis(job_id):
             log_fn=lambda msg: _log_activity(job_id, msg),
             pdf_attachments=pdf_attachments,
             progress_fn=_stream_progress,
+            include_revisions=not job.get("scorecard_only"),
         )
 
         # If text-based jurisdiction detection failed but the LLM identified a
@@ -949,7 +969,10 @@ def _run_analysis(job_id):
             cost = usage.get("estimated_cost", 0)
             _log_activity(job_id, f"API usage: {total_in:,} input + {total_out:,} output tokens — estimated cost: ${cost:.4f}")
         num_revisions = len(analysis.get("revisions", []))
-        _log_activity(job_id, f"Generated {num_revisions} suggested revisions for track changes")
+        if job.get("scorecard_only"):
+            _log_activity(job_id, "Scorecard-only mode — revision / redline artifacts skipped")
+        else:
+            _log_activity(job_id, f"Generated {num_revisions} suggested revisions for track changes")
         _update_job(job_id, 88, "Analysis complete. Generating scorecard...")
 
         # Step 7: Generate scorecard (docx + pdf) — the only auto-generated artifact.

@@ -80,6 +80,23 @@
             </select>
         </div>
 
+        <div class="form-group">
+            <label>Review type</label>
+            <p class="help-text">Scorecard-only skips redline / marked-contract generation and the extra revision AI pass.</p>
+            <div class="model-toggle">
+                <label class="model-option selected" id="mode-full-label">
+                    <input type="radio" name="review_mode" value="full" checked
+                           onchange="document.getElementById('mode-full-label').classList.add('selected'); document.getElementById('mode-scorecard-label').classList.remove('selected');">
+                    <span class="model-label">Full review (scorecard + redline available)</span>
+                </label>
+                <label class="model-option" id="mode-scorecard-label">
+                    <input type="radio" name="review_mode" value="scorecard"
+                           onchange="document.getElementById('mode-scorecard-label').classList.add('selected'); document.getElementById('mode-full-label').classList.remove('selected');">
+                    <span class="model-label">Scorecard only</span>
+                </label>
+            </div>
+        </div>
+
         <button type="submit" class="btn btn-primary">Analyze contract</button>
     </form>
 </div>

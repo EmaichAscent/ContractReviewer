@@ -33,3 +33,5 @@ SCORECARD_TEMPLATE_PATH = os.path.join(
 ADMIN_PROMPTS_PATH = os.path.join(DATA_FOLDER, "prompts.json")
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "contract-reviewer-dev-key")
+
+LOGO_PATH = os.path.join(BASE_DIR, "assets", "cam-leadership-institute-logo.png")
