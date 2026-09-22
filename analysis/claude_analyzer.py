@@ -144,8 +144,10 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
         progress_fn: optional callback function(phase, chars_so_far) called as
             text streams in from Claude. Lets the caller update a progress bar
             and status message in real time. Phase is "analysis" or "revisions".
-        include_revisions: when False (scorecard-only mode), skip the second
-            LLM call that produces track-change revision text.
+        include_revisions: when False (scorecard-only / free scoring mode), skip
+            the second LLM call that produces track-change revision text, omit
+            overall recommendations and per-criterion revision examples from the
+            main analysis prompt, and exclude Statutory Compliance scoring.
 
     Returns:
         dict with analysis results including scores, explanations, and revisions
@@ -154,8 +156,16 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
         if log_fn:
             log_fn(msg)
 
+    scorecard_only = not include_revisions
+
     prompts = load_prompts()
     criteria_data = load_criteria()
+    if scorecard_only:
+        # Free/initial scorecard does not score Statutory Compliance — drop it
+        # from criteria so weights renormalize and the LLM skips that work.
+        criteria_data = _criteria_without_statutory(criteria_data)
+        statutes_context = ""
+        log("Scorecard-only mode — excluding Statutory Compliance from analysis")
     model = model or config.CLAUDE_MODEL
 
     system_prompt = prompts.get("system_prompt", "You are an expert contract reviewer.")
@@ -166,7 +176,7 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
     jurisdiction_text = ""
     if jurisdiction:
         jurisdiction_text = f"\nJurisdiction: {jurisdiction.get('state', 'Unknown')} ({jurisdiction.get('state_abbrev', '')})"
-        if jurisdiction.get("statutes_mentioned"):
+        if jurisdiction.get("statutes_mentioned") and not scorecard_only:
             jurisdiction_text += f"\nStatutes referenced in contract: {', '.join(jurisdiction['statutes_mentioned'])}"
 
     # Build contract section. If PDFs are attached, point the LLM at them as
@@ -193,6 +203,12 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
     else:
         contract_section = contract_text
 
+    statutes_section = (
+        "Statutory analysis is not requested for this scorecard-only run."
+        if scorecard_only
+        else (statutes_context if statutes_context else "No cached statutes available for this jurisdiction.")
+    )
+
     user_prompt = f"""{analysis_prompt_template}
 
 ## CONTRACT UNDER REVIEW
@@ -208,9 +224,38 @@ def analyze_contract(contract_text, ideal_template_text, statutes_context="", ju
 {jurisdiction_text}
 
 ## RELEVANT STATUTES
-{statutes_context if statutes_context else "No cached statutes available for this jurisdiction."}
+{statutes_section}
 
 Please analyze the contract and return your complete analysis as JSON."""
+
+    if scorecard_only:
+        user_prompt += """
+
+## SCORECARD-ONLY MODE (FASTER / LIGHTER RESPONSE)
+This is a free scorecard-only analysis. Optimize for speed and shorter output:
+- Score ONLY the categories listed in SCORING CRITERIA above. Do NOT include a "Statutory Compliance" category.
+- For each criterion return ONLY: score (0-2), explanation, and optional contract_text. Set suggested_revision, revision_type, and revision_location to null — do NOT write revision examples.
+- Provide a concise category "summary" for each category.
+- Do NOT include overall_recommendation.
+- Do NOT include statute_concerns.
+- Do NOT include gap_analysis, template_strengths, or executive_summary.
+Return JSON with this reduced shape:
+{
+  "jurisdiction": {"state": "...", "statutes_referenced": []},
+  "categories": {
+    "CategoryName": {
+      "criteria": {
+        "criterion_id": {
+          "score": 0-2,
+          "explanation": "...",
+          "contract_text": "..."
+        }
+      },
+      "summary": "overall category assessment"
+    }
+  }
+}
+"""
 
     # Calculate word counts for logging
     contract_words = len(contract_text.split())
@@ -265,6 +310,26 @@ Please analyze the contract and return your complete analysis as JSON."""
     log("Parsing analysis results and computing scores...")
 
     analysis = _parse_analysis_response(response_text, criteria_data)
+
+    if scorecard_only:
+        # Defensive: drop statutory artifacts if the model included them anyway,
+        # then recompute overall so weights are not skewed.
+        cats = analysis.get("categories") or {}
+        if "Statutory Compliance" in cats:
+            cats.pop("Statutory Compliance", None)
+            analysis["categories"] = cats
+            _compute_scores(analysis, criteria_data)
+        analysis["statute_concerns"] = []
+        analysis.pop("overall_recommendation", None)
+        analysis.pop("gap_analysis", None)
+        analysis.pop("template_strengths", None)
+        analysis.pop("executive_summary", None)
+        for cat_data in (analysis.get("categories") or {}).values():
+            for crit in (cat_data.get("criteria") or {}).values():
+                if isinstance(crit, dict):
+                    crit["suggested_revision"] = None
+                    crit["revision_type"] = None
+                    crit["revision_location"] = None
 
     if analysis.get("parse_error"):
         log("WARNING: Could not parse JSON from AI response — results may be incomplete")
@@ -406,6 +471,15 @@ def _estimate_cost(model, input_tokens, output_tokens):
     rates = pricing.get(model, pricing["claude-sonnet-4-6"])
     cost = (input_tokens * rates["input"] / 1_000_000) + (output_tokens * rates["output"] / 1_000_000)
     return round(cost, 4)
+
+
+
+def _criteria_without_statutory(criteria_data):
+    """Return a shallow copy of criteria with Statutory Compliance removed."""
+    import copy
+    filtered = copy.deepcopy(criteria_data)
+    filtered.get("categories", {}).pop("Statutory Compliance", None)
+    return filtered
 
 
 def _format_criteria(criteria_data):

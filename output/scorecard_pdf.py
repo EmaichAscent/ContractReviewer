@@ -8,13 +8,14 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    HRFlowable, Image, KeepTogether,
+    HRFlowable, Image, KeepTogether, Flowable,
 )
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from datetime import datetime
 
 import config
 
+STATUTORY_CATEGORY = "Statutory Compliance"
 
 # Colors
 NAVY = colors.HexColor('#003366')
@@ -23,6 +24,29 @@ AMBER = colors.HexColor('#cc9900')
 RED = colors.HexColor('#c00000')
 LIGHT_GRAY = colors.HexColor('#f0f4f8')
 BORDER_GRAY = colors.HexColor('#dee2e6')
+TRACK_GRAY = colors.HexColor('#e9ecef')
+
+
+class ScoreBar(Flowable):
+    """Horizontal progress bar showing a 0–1 category score."""
+
+    def __init__(self, score, width=3.2 * inch, height=10):
+        Flowable.__init__(self)
+        self.score = max(0.0, min(1.0, float(score or 0)))
+        self.bar_width = width
+        self.bar_height = height
+        self.width = width
+        self.height = height
+
+    def draw(self):
+        self.canv.setFillColor(TRACK_GRAY)
+        self.canv.roundRect(0, 0, self.bar_width, self.bar_height, 3, fill=1, stroke=0)
+        fill_w = self.bar_width * self.score
+        if fill_w > 0:
+            fill_color = GREEN if self.score >= 0.7 else AMBER if self.score >= 0.4 else RED
+            self.canv.setFillColor(fill_color)
+            # Clip to rounded track by drawing a rect; short fills use square ends.
+            self.canv.rect(0, 0, fill_w, self.bar_height, fill=1, stroke=0)
 
 
 def _logo_path():
@@ -34,7 +58,24 @@ def _logo_path():
     return path if os.path.exists(path) else None
 
 
-def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdiction=None):
+def _display_categories(analysis_results, scorecard_only):
+    categories = dict(analysis_results.get("categories") or {})
+    if scorecard_only:
+        categories.pop(STATUTORY_CATEGORY, None)
+    return categories
+
+
+def _display_overall_score(analysis_results, categories, scorecard_only):
+    if not scorecard_only:
+        return analysis_results.get("overall_score", 0)
+    if STATUTORY_CATEGORY not in (analysis_results.get("categories") or {}):
+        return analysis_results.get("overall_score", 0)
+    from analysis.scoring_criteria import calculate_overall_score
+    cat_scores = {name: data.get("score", 0) for name, data in categories.items()}
+    return round(calculate_overall_score(cat_scores), 2)
+
+
+def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdiction=None, scorecard_only=False):
     """Generate a professional PDF scorecard."""
     doc = SimpleDocTemplate(
         output_path,
@@ -71,6 +112,14 @@ def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdict
         'SmallText', parent=styles['Normal'],
         fontSize=8, textColor=colors.gray, alignment=TA_CENTER,
     ))
+    styles.add(ParagraphStyle(
+        'BarLabel', parent=styles['Normal'],
+        fontSize=10, textColor=NAVY, leading=12, alignment=TA_LEFT,
+    ))
+    styles.add(ParagraphStyle(
+        'BarPct', parent=styles['Normal'],
+        fontSize=10, leading=12, alignment=TA_RIGHT,
+    ))
 
     elements = []
 
@@ -89,7 +138,10 @@ def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdict
     review_date = datetime.now().strftime("%B %d, %Y")
     jurisdiction_text = ""
     if jurisdiction and jurisdiction.get("state"):
-        jurisdiction_text = f" &nbsp;|&nbsp; Jurisdiction: {jurisdiction['state']} ({jurisdiction.get('state_abbrev', '')})"
+        jurisdiction_text = (
+            f" &nbsp;|&nbsp; Jurisdiction: {jurisdiction['state']} "
+            f"({jurisdiction.get('state_abbrev', '')})"
+        )
     elements.append(Paragraph(
         f"Client: <b>{client_name}</b> &nbsp;|&nbsp; Review Date: <b>{review_date}</b>{jurisdiction_text}",
         styles['SubTitle']
@@ -97,8 +149,8 @@ def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdict
 
     elements.append(HRFlowable(width="100%", thickness=2, color=NAVY, spaceAfter=20))
 
-    # Overall Score
-    overall_score = analysis_results.get("overall_score", 0)
+    categories = _display_categories(analysis_results, scorecard_only)
+    overall_score = _display_overall_score(analysis_results, categories, scorecard_only)
     overall_pct = round(overall_score * 100)
     score_color = GREEN if overall_score >= 0.7 else AMBER if overall_score >= 0.4 else RED
 
@@ -128,8 +180,41 @@ def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdict
     elements.append(score_table)
     elements.append(Spacer(1, 16))
 
-    # Section summaries only (no category summary table, no per-criterion details)
-    categories = analysis_results.get("categories", {})
+    # Category score overview with visual progress bars
+    if categories:
+        elements.append(Paragraph("Category Scores", styles['SectionHead']))
+        elements.append(HRFlowable(width="100%", thickness=1, color=BORDER_GRAY, spaceAfter=8))
+
+        bar_rows = []
+        for cat_name, cat_data in categories.items():
+            score = cat_data.get("score", 0)
+            pct = round(score * 100)
+            sc = GREEN if score >= 0.7 else AMBER if score >= 0.4 else RED
+            bar_rows.append([
+                Paragraph(cat_name, styles['BarLabel']),
+                ScoreBar(score, width=3.0 * inch, height=9),
+                Paragraph(
+                    f'<font color="{sc.hexval()}"><b>{pct}%</b></font>',
+                    styles['BarPct'],
+                ),
+            ])
+
+        bars_table = Table(bar_rows, colWidths=[2.4 * inch, 3.1 * inch, 0.7 * inch])
+        bars_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.white),
+            ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, LIGHT_GRAY]),
+            ('BOX', (0, 0), (-1, -1), 0.5, BORDER_GRAY),
+            ('LINEBELOW', (0, 0), (-1, -2), 0.5, BORDER_GRAY),
+        ]))
+        elements.append(bars_table)
+        elements.append(Spacer(1, 16))
+
+    # Section summaries only (no per-criterion detail tables)
     for cat_name, cat_data in categories.items():
         score = cat_data.get("score", 0)
         sc = GREEN if score >= 0.7 else AMBER if score >= 0.4 else RED
@@ -145,21 +230,21 @@ def generate_scorecard_pdf(analysis_results, client_name, output_path, jurisdict
         elements.append(KeepTogether(cat_elements))
         elements.append(Spacer(1, 8))
 
-    # Statute Concerns
-    statute_concerns = analysis_results.get("statute_concerns", [])
-    if statute_concerns:
-        elements.append(Paragraph("Statutory Compliance Notes", styles['SectionHead']))
-        elements.append(HRFlowable(width="100%", thickness=1, color=BORDER_GRAY, spaceAfter=8))
-        for concern in statute_concerns:
-            elements.append(Paragraph(f"• {concern}", styles['BodyText2']))
+    # Statute concerns + recommendation (full review only)
+    if not scorecard_only:
+        statute_concerns = analysis_results.get("statute_concerns", [])
+        if statute_concerns:
+            elements.append(Paragraph("Statutory Compliance Notes", styles['SectionHead']))
+            elements.append(HRFlowable(width="100%", thickness=1, color=BORDER_GRAY, spaceAfter=8))
+            for concern in statute_concerns:
+                elements.append(Paragraph(f"• {concern}", styles['BodyText2']))
 
-    # Recommendation
-    recommendation = analysis_results.get("overall_recommendation", "")
-    if recommendation and not recommendation.startswith('{'):
-        elements.append(Spacer(1, 12))
-        elements.append(Paragraph("Recommendation", styles['SectionHead']))
-        elements.append(HRFlowable(width="100%", thickness=1, color=BORDER_GRAY, spaceAfter=8))
-        elements.append(Paragraph(recommendation, styles['BodyText2']))
+        recommendation = analysis_results.get("overall_recommendation", "")
+        if recommendation and not str(recommendation).startswith('{'):
+            elements.append(Spacer(1, 12))
+            elements.append(Paragraph("Recommendation", styles['SectionHead']))
+            elements.append(HRFlowable(width="100%", thickness=1, color=BORDER_GRAY, spaceAfter=8))
+            elements.append(Paragraph(recommendation, styles['BodyText2']))
 
     # Footer
     elements.append(Spacer(1, 30))
