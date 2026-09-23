@@ -256,6 +256,33 @@ Return JSON with this reduced shape:
   }
 }
 """
+    else:
+        # Full review still scores every category in THIS call. Per-criterion
+        # suggested_revision prose used to blow the output budget so the model
+        # often finished only Profitability before truncation — leaving the
+        # scorecard with a single category. Revisions are produced by a
+        # separate LLM call (_get_revisions), so keep the first pass lean.
+        user_prompt += """
+
+## FULL-REVIEW OUTPUT RULES (CRITICAL — OVERRIDES EARLIER INSTRUCTIONS)
+You MUST score EVERY category listed in SCORING CRITERIA above before writing any other section.
+Incomplete category coverage is an analysis failure.
+
+For each criterion return ONLY:
+- score (0-2)
+- explanation (2-4 sentences citing contract language)
+- contract_text (short quote or null)
+Set suggested_revision, revision_type, and revision_location to null — do NOT write revision examples in this pass (a separate step generates them).
+
+Provide a concise category "summary" (2-3 sentences) for each category.
+
+Only AFTER every category is fully scored, add these concise extras:
+- overall_recommendation
+- statute_concerns
+- gap_analysis
+- template_strengths
+- executive_summary
+"""
 
     # Calculate word counts for logging
     contract_words = len(contract_text.split())
@@ -277,39 +304,89 @@ Return JSON with this reduced shape:
     # Stream the response so we can update a progress bar in real time and
     # also because the SDK refuses non-streaming calls that might exceed 10
     # minutes (multimodal PDF + 32k max_tokens crosses that threshold).
-    with client.messages.stream(
-        model=model,
-        max_tokens=config.MAX_TOKENS,
-        system=system_prompt,
-        messages=[{"role": "user", "content": message_content}],
-    ) as stream:
-        accumulated = ""
-        last_notified = 0
-        last_score_check = 0
-        last_partial = None
-        for text_chunk in stream.text_stream:
-            accumulated += text_chunk
-            chars_so_far = len(accumulated)
-            # Throttle progress callbacks — text_stream can yield very small
-            # chunks (one token = ~4 chars) and we don't want to flood the UI.
-            if progress_fn and chars_so_far - last_notified >= 500:
-                # Score-extraction parse is more expensive than the progress
-                # update, so we only re-extract every ~2000 chars.
-                if chars_so_far - last_score_check >= 2000:
-                    last_partial = extract_partial_scores(accumulated)
-                    last_score_check = chars_so_far
-                try:
-                    progress_fn("analysis", chars_so_far, last_partial)
-                except Exception:
-                    pass
-                last_notified = chars_so_far
-        response = stream.get_final_message()
+    response = _stream_analysis_message(
+        client, model, system_prompt, message_content, progress_fn=progress_fn,
+    )
 
     response_text = response.content[0].text
-    log(f"AI response received — {response.usage.output_tokens:,} tokens ({len(response_text):,} chars)")
+    stop_reason = getattr(response, "stop_reason", None)
+    log(
+        f"AI response received — {response.usage.output_tokens:,} tokens "
+        f"({len(response_text):,} chars), stop_reason={stop_reason}"
+    )
     log("Parsing analysis results and computing scores...")
 
     analysis = _parse_analysis_response(response_text, criteria_data)
+
+    # Track token usage (continuation below may add more)
+    usage = {
+        "analysis_input_tokens": response.usage.input_tokens,
+        "analysis_output_tokens": response.usage.output_tokens,
+        "model": model,
+        "analysis_stop_reason": stop_reason,
+    }
+
+    # If the first pass only partially covered categories (classic failure mode:
+    # verbose Profitability revisions exhaust the output budget), request the
+    # missing categories in a focused follow-up instead of shipping a one-bar scorecard.
+    expected_cats = set(criteria_data.get("categories", {}).keys())
+    got_cats = set((analysis.get("categories") or {}).keys())
+    missing_cats = sorted(expected_cats - got_cats)
+    if missing_cats and not analysis.get("parse_error"):
+        log(
+            f"WARNING: First pass only scored {sorted(got_cats) or 'nothing'} — "
+            f"missing {missing_cats}. Requesting continuation..."
+        )
+        cont_criteria = {
+            "categories": {
+                name: criteria_data["categories"][name] for name in missing_cats
+            }
+        }
+        cont_analysis, cont_usage = _continue_missing_categories(
+            client=client,
+            system_prompt=system_prompt,
+            model=model,
+            contract_section=contract_section,
+            ideal_template_text=ideal_template_text,
+            statutes_section=statutes_section,
+            jurisdiction_text=jurisdiction_text,
+            criteria_data=cont_criteria,
+            missing_cats=missing_cats,
+            pdf_blocks=pdf_blocks,
+            scorecard_only=scorecard_only,
+            log_fn=log,
+            progress_fn=progress_fn,
+        )
+        usage["analysis_input_tokens"] += cont_usage.get("input_tokens", 0)
+        usage["analysis_output_tokens"] += cont_usage.get("output_tokens", 0)
+        usage["analysis_continuation_stop_reason"] = cont_usage.get("stop_reason")
+        for cat_name, cat_data in (cont_analysis.get("categories") or {}).items():
+            if cat_name not in (analysis.get("categories") or {}):
+                analysis.setdefault("categories", {})[cat_name] = cat_data
+        # Prefer extras from continuation only when the first pass lacked them.
+        for key in (
+            "overall_recommendation",
+            "statute_concerns",
+            "gap_analysis",
+            "template_strengths",
+            "executive_summary",
+            "jurisdiction",
+        ):
+            if cont_analysis.get(key) and not analysis.get(key):
+                analysis[key] = cont_analysis[key]
+        if cont_analysis.get("truncated_response"):
+            analysis["truncated_response"] = True
+        _compute_scores(analysis, criteria_data)
+        still_missing = sorted(expected_cats - set((analysis.get("categories") or {}).keys()))
+        if still_missing:
+            analysis["incomplete_categories"] = still_missing
+            log(f"WARNING: Categories still missing after continuation: {still_missing}")
+        else:
+            analysis.pop("truncated_response", None)
+            log(
+                f"Continuation recovered all categories — "
+                f"now have {sorted((analysis.get('categories') or {}).keys())}"
+            )
 
     if scorecard_only:
         # Defensive: drop statutory artifacts if the model included them anyway,
@@ -330,23 +407,35 @@ Return JSON with this reduced shape:
                     crit["suggested_revision"] = None
                     crit["revision_type"] = None
                     crit["revision_location"] = None
+    else:
+        # Ensure first-pass nulls stick even if the model ignored instructions —
+        # the dedicated revisions call supplies concrete revision text.
+        for cat_data in (analysis.get("categories") or {}).values():
+            for crit in (cat_data.get("criteria") or {}).values():
+                if isinstance(crit, dict):
+                    crit["suggested_revision"] = None
+                    crit["revision_type"] = None
+                    crit["revision_location"] = None
 
     if analysis.get("parse_error"):
         log("WARNING: Could not parse JSON from AI response — results may be incomplete")
+    elif analysis.get("incomplete_categories"):
+        score = analysis.get("overall_score", 0)
+        log(
+            f"WARNING: Analysis incomplete — missing {analysis['incomplete_categories']}; "
+            f"recovered {len(analysis.get('categories', {}))} categories with overall score {score:.0%}."
+        )
     elif analysis.get("truncated_response"):
         score = analysis.get("overall_score", 0)
         num_cats = len(analysis.get("categories", {}))
-        log(f"WARNING: AI response hit max output tokens — recovered {num_cats} categories with overall score {score:.0%}. Consider re-running for complete coverage.")
+        log(
+            f"WARNING: AI response may be truncated — recovered {num_cats} categories "
+            f"with overall score {score:.0%}."
+        )
     else:
         score = analysis.get("overall_score", 0)
-        log(f"Analysis parsed successfully — overall score: {score:.0%}")
-
-    # Track token usage
-    usage = {
-        "analysis_input_tokens": response.usage.input_tokens,
-        "analysis_output_tokens": response.usage.output_tokens,
-        "model": model,
-    }
+        num_cats = len(analysis.get("categories", {}))
+        log(f"Analysis parsed successfully — {num_cats} categories, overall score: {score:.0%}")
 
     # Optionally get specific revision suggestions (skipped in scorecard-only mode)
     if include_revisions:
@@ -474,6 +563,135 @@ def _estimate_cost(model, input_tokens, output_tokens):
 
 
 
+def _strip_markdown_fence(text):
+    """Remove optional ``` / ```json wrappers so truncation checks see real JSON."""
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    cleaned = cleaned.strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].rstrip()
+    return cleaned
+
+
+def _response_looks_truncated(response_text):
+    """True when the response body is incomplete JSON (not merely fenced)."""
+    cleaned = _strip_markdown_fence(response_text)
+    if not cleaned:
+        return True
+    if cleaned.endswith("}"):
+        return False
+    # Balanced extract succeeded earlier; if the cleaned body does not end with
+    # '}', the stream almost certainly cut mid-object.
+    return True
+
+
+def _stream_analysis_message(client, model, system_prompt, message_content, progress_fn=None, phase="analysis"):
+    """Stream one Claude messages call; optionally push live progress/partial scores."""
+    with client.messages.stream(
+        model=model,
+        max_tokens=config.MAX_TOKENS,
+        system=system_prompt,
+        messages=[{"role": "user", "content": message_content}],
+    ) as stream:
+        accumulated = ""
+        last_notified = 0
+        last_score_check = 0
+        last_partial = None
+        for text_chunk in stream.text_stream:
+            accumulated += text_chunk
+            chars_so_far = len(accumulated)
+            if progress_fn and chars_so_far - last_notified >= 500:
+                if phase == "analysis" and chars_so_far - last_score_check >= 2000:
+                    last_partial = extract_partial_scores(accumulated)
+                    last_score_check = chars_so_far
+                try:
+                    progress_fn(phase, chars_so_far, last_partial)
+                except Exception:
+                    pass
+                last_notified = chars_so_far
+        return stream.get_final_message()
+
+
+def _continue_missing_categories(
+    client,
+    system_prompt,
+    model,
+    contract_section,
+    ideal_template_text,
+    statutes_section,
+    jurisdiction_text,
+    criteria_data,
+    missing_cats,
+    pdf_blocks=None,
+    scorecard_only=False,
+    log_fn=None,
+    progress_fn=None,
+):
+    """Second-pass analysis scoped to categories the first pass omitted."""
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
+
+    criteria_text = _format_criteria(criteria_data)
+    extras = (
+        "Do NOT include overall_recommendation, statute_concerns, gap_analysis, "
+        "template_strengths, or executive_summary."
+        if scorecard_only
+        else (
+            "After scoring these categories you may include concise "
+            "overall_recommendation / statute_concerns / gap_analysis / "
+            "template_strengths / executive_summary if useful; keep them short."
+        )
+    )
+    user_prompt = f"""Continue the contract analysis. The previous response was incomplete and omitted these categories: {', '.join(missing_cats)}.
+
+Score ONLY the categories listed in SCORING CRITERIA below. Do not re-score categories that are not listed.
+
+For each criterion return ONLY: score (0-2), explanation (2-4 sentences), and optional contract_text.
+Set suggested_revision, revision_type, and revision_location to null.
+Provide a concise category "summary" for each category.
+{extras}
+
+## CONTRACT UNDER REVIEW
+{contract_section}
+
+## IDEAL TEMPLATE AGREEMENT
+{ideal_template_text}
+
+## SCORING CRITERIA (MISSING CATEGORIES ONLY)
+{criteria_text}
+
+## JURISDICTION INFORMATION
+{jurisdiction_text}
+
+## RELEVANT STATUTES
+{statutes_section}
+
+Return complete JSON for these categories now."""
+
+    log(f"Continuation pass for {len(missing_cats)} categories: {missing_cats}")
+    message_content = pdf_blocks + [{"type": "text", "text": user_prompt}] if pdf_blocks else user_prompt
+    response = _stream_analysis_message(
+        client, model, system_prompt, message_content,
+        progress_fn=progress_fn, phase="analysis",
+    )
+    response_text = response.content[0].text
+    log(
+        f"Continuation response — {response.usage.output_tokens:,} tokens "
+        f"({len(response_text):,} chars), stop_reason={getattr(response, 'stop_reason', None)}"
+    )
+    parsed = _parse_analysis_response(response_text, criteria_data)
+    usage = {
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "stop_reason": getattr(response, "stop_reason", None),
+    }
+    return parsed, usage
+
+
 def _criteria_without_statutory(criteria_data):
     """Return a shallow copy of criteria with Statutory Compliance removed."""
     import copy
@@ -506,9 +724,10 @@ def _parse_analysis_response(response_text, criteria_data):
     result = _extract_json_object(response_text)
     if result and result.get("categories"):
         _compute_scores(result, criteria_data)
-        # If repair was used (response was truncated), flag it so the UI can
-        # warn the user that some criteria may be missing.
-        if not response_text.rstrip().endswith("}"):
+        # Flag truly truncated JSON. Do NOT treat a markdown ``` fence after a
+        # complete object as truncation — Claude usually wraps JSON in fences,
+        # which previously false-positived every successful scorecard run.
+        if _response_looks_truncated(response_text):
             result["truncated_response"] = True
         return result
 
