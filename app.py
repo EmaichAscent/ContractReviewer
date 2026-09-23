@@ -299,6 +299,14 @@ def results(job_id):
 
     usage = analysis.get("usage", {})
 
+    expected_categories = list(load_criteria()["categories"].keys())
+    if job.get("scorecard_only"):
+        expected_categories = [c for c in expected_categories if c != "Statutory Compliance"]
+    scored_categories = list((analysis.get("categories") or {}).keys())
+    incomplete_categories = analysis.get("incomplete_categories") or [
+        c for c in expected_categories if c not in scored_categories
+    ]
+
     return render_template("results.html",
         job_id=job_id,
         client_name=job["client_name"],
@@ -319,6 +327,8 @@ def results(job_id):
         },
         has_primary_docx=bool(job.get("primary_docx_filename")),
         scorecard_only=bool(job.get("scorecard_only")),
+        truncated_response=bool(analysis.get("truncated_response")),
+        incomplete_categories=incomplete_categories,
     )
 
 

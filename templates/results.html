@@ -22,6 +22,19 @@
         </dl>
     </header>
 
+    {% if incomplete_categories %}
+    <div class="flash flash-error" style="margin-bottom: 1rem;">
+        <strong>Incomplete scorecard:</strong> these categories were not scored —
+        {{ incomplete_categories | join(', ') }}.
+        Re-run the review to get a complete result.
+        {% if truncated_response %} The model response was truncated before all categories finished.{% endif %}
+    </div>
+    {% elif truncated_response %}
+    <div class="flash flash-error" style="margin-bottom: 1rem;">
+        <strong>Warning:</strong> the AI response may have been truncated; some criteria could be missing. Consider re-running.
+    </div>
+    {% endif %}
+
     <div class="results-layout">
         <main class="results-main">
             <!-- Hero: overall score + category strip -->
