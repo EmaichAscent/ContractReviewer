@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p uploads results data data/reference_contracts
+RUN mkdir -p uploads results data data/results data/reference_contracts
 
 # Copy default data files to a seed directory (volume mounts over /app/data)
 RUN cp -r data /app/data_defaults
