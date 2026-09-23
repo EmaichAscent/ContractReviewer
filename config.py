@@ -17,8 +17,15 @@ REFERENCE_CONTRACTS_FOLDER = os.path.join(BASE_DIR, "data", "reference_contracts
 MAX_TOKENS = 32000
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-RESULTS_FOLDER = os.path.join(BASE_DIR, "results")
 DATA_FOLDER = os.path.join(BASE_DIR, "data")
+# Persist job History across Railway redeploys: the volume mounts at /app/data.
+# Override with RESULTS_FOLDER for local/dev (defaults to ./results when no volume).
+if os.environ.get("RESULTS_FOLDER"):
+    RESULTS_FOLDER = os.environ["RESULTS_FOLDER"]
+elif os.path.isdir("/app/data"):
+    RESULTS_FOLDER = "/app/data/results"
+else:
+    RESULTS_FOLDER = os.path.join(BASE_DIR, "results")
 DB_PATH = os.path.join(DATA_FOLDER, "statutes.db")
 
 # Look for ideal template in data/ first (for deployment), then Samples/ (local dev)

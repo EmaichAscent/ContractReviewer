@@ -141,6 +141,33 @@ def _recover_job(job_id):
     return None
 
 
+def _recover_all_jobs():
+    """Scan RESULTS_FOLDER and load every job into History after restart."""
+    os.makedirs(config.RESULTS_FOLDER, exist_ok=True)
+    try:
+        entries = os.listdir(config.RESULTS_FOLDER)
+    except OSError:
+        return
+    recovered = 0
+    for name in entries:
+        if name.startswith("_") or name.startswith("."):
+            continue
+        job_path = os.path.join(config.RESULTS_FOLDER, name)
+        if not os.path.isdir(job_path):
+            continue
+        if name in jobs:
+            continue
+        if _recover_job(name):
+            recovered += 1
+    if recovered:
+        print(f"Recovered {recovered} job(s) from {config.RESULTS_FOLDER}")
+
+
+# Ensure results dir exists and History repopulates under gunicorn (not only __main__).
+print(f"RESULTS_FOLDER={config.RESULTS_FOLDER}")
+_recover_all_jobs()
+
+
 @app.route("/")
 def index():
     return render_template("upload.html")
