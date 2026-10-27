@@ -299,7 +299,7 @@ Only AFTER every category is fully scored, add these concise extras:
     log(f"Scoring against {num_criteria} criteria across {len(criteria_data['categories'])} categories")
     log(f"Sending {total_prompt_words:,} words to {model} (this may take 2-5 minutes)...")
 
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    client = config.create_anthropic_client()
     message_content = pdf_blocks + [{"type": "text", "text": user_prompt}] if pdf_blocks else user_prompt
     # Stream the response so we can update a progress bar in real time and
     # also because the SDK refuses non-streaming calls that might exceed 10

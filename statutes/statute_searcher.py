@@ -1,7 +1,6 @@
 """Search the web for relevant HOA/condo statutes and cache results."""
 
 import json
-import anthropic
 
 import config
 from statutes.statute_db import get_statutes_for_state, save_statutes
@@ -82,7 +81,7 @@ def _search_with_claude(state_abbrev, contract_text):
         prompt += f"\n\nContract excerpt for context:\n{contract_text[:3000]}"
 
     try:
-        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        client = config.create_anthropic_client()
         response = client.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=config.MAX_TOKENS,
