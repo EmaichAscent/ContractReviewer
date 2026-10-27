@@ -21,7 +21,6 @@ import tempfile
 import zipfile
 from datetime import datetime
 
-import anthropic
 from lxml import etree
 
 import config
@@ -111,7 +110,7 @@ def _request_template_revisions(template_text, analysis, client_name, jurisdicti
 
 Return the JSON object as specified."""
 
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    client = config.create_anthropic_client()
     # Streaming is required when max_tokens + prompt size make the call
     # potentially exceed the SDK's 10-minute non-streaming ceiling.
     with client.messages.stream(

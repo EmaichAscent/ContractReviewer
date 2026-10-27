@@ -3,6 +3,10 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# Optional. Account-linked keys that are not scoped to one workspace must send
+# this value as the anthropic-workspace-id header. Unset or blank keeps the
+# previous request shape: no workspace header. The value is never logged.
+ANTHROPIC_WORKSPACE_ID = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
 CLAUDE_MODEL = "claude-sonnet-4-6"  # default; changeable in admin UI
 AVAILABLE_MODELS = {
     "claude-sonnet-4-6": "Sonnet 4.6 (Fast, $0.10-0.30/review)",
@@ -42,3 +46,21 @@ ADMIN_PROMPTS_PATH = os.path.join(DATA_FOLDER, "prompts.json")
 SECRET_KEY = os.environ.get("SECRET_KEY", "contract-reviewer-dev-key")
 
 LOGO_PATH = os.path.join(BASE_DIR, "assets", "cam-leadership-institute-logo.png")
+
+
+def create_anthropic_client():
+    """Return an Anthropic client for API calls.
+
+    When ANTHROPIC_WORKSPACE_ID is set, it is sent as the default
+    anthropic-workspace-id header. When it is unset or blank, the client is
+    built with only the API key.
+    """
+    import anthropic
+
+    workspace_id = (ANTHROPIC_WORKSPACE_ID or "").strip()
+    if workspace_id:
+        return anthropic.Anthropic(
+            api_key=ANTHROPIC_API_KEY,
+            default_headers={"anthropic-workspace-id": workspace_id},
+        )
+    return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
