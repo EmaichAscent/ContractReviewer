@@ -57,6 +57,52 @@ ARTIFACT_FILES = {
 }
 
 
+_DATE_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def _format_mtime(path):
+    """Local timestamp string for an existing file or directory, or ''."""
+    try:
+        if path and os.path.exists(path):
+            return datetime.fromtimestamp(os.path.getmtime(path)).strftime(_DATE_FORMAT)
+    except OSError:
+        return ""
+    return ""
+
+
+def _fallback_job_date(job_id):
+    """Best on-disk timestamp for a job that has no stored date.
+
+    Reads mtime only. Does not create, delete, or rewrite anything.
+    """
+    if not job_id:
+        return ""
+    job_dir = os.path.join(config.RESULTS_FOLDER, job_id)
+    for path in (
+        os.path.join(job_dir, "analysis.json"),
+        os.path.join(job_dir, "job_state.json"),
+        job_dir,
+    ):
+        stamp = _format_mtime(path)
+        if stamp:
+            return stamp
+    return ""
+
+
+def _stored_date(job):
+    if not isinstance(job, dict):
+        return ""
+    date = job.get("date")
+    if isinstance(date, str) and date.strip():
+        return date.strip()
+    return ""
+
+
+def _job_date(job, job_id=None):
+    """Date for display and sorting. Stored date wins; otherwise file mtime."""
+    return _stored_date(job) or _fallback_job_date(job_id)
+
+
 def _persist_job(job_id):
     """Save job state to disk so it survives server restarts."""
     job = jobs.get(job_id)
@@ -73,6 +119,11 @@ def _persist_job(job_id):
         "primary_docx_filename": job.get("primary_docx_filename"),
         "scorecard_only": bool(job.get("scorecard_only")),
     }
+    # Failed and in-progress records are reloaded from this file after a
+    # restart. Omitting date made /history raise KeyError on those records.
+    stored_date = _stored_date(job)
+    if stored_date:
+        state["date"] = stored_date
     job_state_path = os.path.join(config.RESULTS_FOLDER, job_id, "job_state.json")
     try:
         with open(job_state_path, "w") as f:
@@ -82,31 +133,39 @@ def _persist_job(job_id):
 
 
 def _recover_job(job_id):
-    """Try to recover job state from disk after a restart."""
+    """Try to recover job state from disk after a restart.
+
+    Fills a missing date in memory from file mtime. Never writes the job
+    files back out — existing analysis.json and job_state.json stay as stored.
+    """
     job_state_path = os.path.join(config.RESULTS_FOLDER, job_id, "job_state.json")
     analysis_path = os.path.join(config.RESULTS_FOLDER, job_id, "analysis.json")
 
-    # If analysis.json exists, the job completed
+    # If analysis.json exists, the job completed. A bad sidecar must not hide it.
     if os.path.exists(analysis_path):
         try:
             with open(analysis_path) as f:
                 results = json.load(f)
+            if not isinstance(results, dict):
+                raise ValueError("analysis.json is not an object")
             client_name = "Unknown"
             primary_docx_filename = None
             scorecard_only = False
+            stored_date = ""
             if os.path.exists(job_state_path):
-                with open(job_state_path) as f:
-                    state = json.load(f)
-                client_name = state.get("client_name", "Unknown")
-                primary_docx_filename = state.get("primary_docx_filename")
-                scorecard_only = bool(state.get("scorecard_only"))
-            # Fall back to the analysis file's mtime if no stored date — keeps
-            # old jobs (predating job_state.json) renderable.
-            try:
-                mtime = os.path.getmtime(analysis_path)
-                date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                date_str = ""
+                try:
+                    with open(job_state_path) as f:
+                        state = json.load(f)
+                    if isinstance(state, dict):
+                        client_name = state.get("client_name") or "Unknown"
+                        primary_docx_filename = state.get("primary_docx_filename")
+                        scorecard_only = bool(state.get("scorecard_only"))
+                        stored_date = _stored_date(state)
+                except Exception:
+                    pass
+            # Prefer the date saved with the job. Older files omitted it;
+            # analysis.json's mtime is the fallback and is not written back.
+            date_str = stored_date or _format_mtime(analysis_path)
             jobs[job_id] = {
                 "id": job_id,
                 "client_name": client_name,
@@ -128,11 +187,15 @@ def _recover_job(job_id):
         try:
             with open(job_state_path) as f:
                 state = json.load(f)
+            if not isinstance(state, dict):
+                return None
             # If it was processing and we restarted, mark as error
             if state.get("status") == "processing":
                 state["status"] = "error"
                 state["error"] = "Server restarted during analysis. Please try again."
                 state["status_message"] = "Error: Server restarted during analysis. Please try again."
+            if not _stored_date(state):
+                state["date"] = _fallback_job_date(job_id)
             jobs[job_id] = state
             return jobs[job_id]
         except Exception:
@@ -236,7 +299,7 @@ def status(job_id):
     if not job:
         flash("Job not found.", "error")
         return redirect(url_for("index"))
-    if job["status"] == "complete":
+    if job.get("status") == "complete":
         return redirect(url_for("results", job_id=job_id))
     # Pull live-score category names from scoring criteria so the processing
     # screen's "live scores" panel matches the categories the LLM actually
@@ -247,9 +310,9 @@ def status(job_id):
         category_names = []
     return render_template("status.html",
         job_id=job_id,
-        client_name=job["client_name"],
-        progress=job["progress"],
-        status_message=job["status_message"],
+        client_name=job.get("client_name") or "Unknown",
+        progress=job.get("progress") or 0,
+        status_message=job.get("status_message") or "",
         category_names=category_names,
     )
 
@@ -263,9 +326,9 @@ def status_json(job_id):
     import time as _time
     elapsed = int(_time.time() - started) if started else 0
     return jsonify({
-        "status": job["status"],
-        "progress": job["progress"],
-        "status_message": job["status_message"],
+        "status": job.get("status") or "unknown",
+        "progress": job.get("progress") or 0,
+        "status_message": job.get("status_message") or "",
         "error": job.get("error"),
         "activity_log": job.get("activity_log", []),
         "partial_scores": job.get("partial_scores") or {},
@@ -279,12 +342,15 @@ def status_json(job_id):
 @app.route("/results/<job_id>")
 def results(job_id):
     job = jobs.get(job_id) or _recover_job(job_id)
-    if not job or not job.get("results"):
+    analysis = job.get("results") if isinstance(job, dict) else None
+    if not isinstance(analysis, dict):
         flash("Results not available.", "error")
         return redirect(url_for("index"))
 
-    analysis = job["results"]
-    overall_score = analysis.get("overall_score", 0)
+    try:
+        overall_score = float(analysis.get("overall_score") or 0)
+    except (TypeError, ValueError):
+        overall_score = 0
     overall_pct = round(overall_score * 100)
 
     score_class = "good" if overall_score >= 0.7 else "warn" if overall_score >= 0.4 else "bad"
@@ -309,9 +375,9 @@ def results(job_id):
 
     return render_template("results.html",
         job_id=job_id,
-        client_name=job["client_name"],
+        client_name=job.get("client_name") or "Unknown",
         jurisdiction=job.get("jurisdiction"),
-        review_date=job["date"],
+        review_date=_job_date(job, job_id),
         categories=analysis.get("categories", {}),
         overall_pct=overall_pct,
         score_class=score_class,
@@ -531,19 +597,43 @@ def download(job_id, file_type):
     return send_file(path, as_attachment=True, download_name=name)
 
 
+def _history_rows(job_map):
+    """History table rows. A missing date or other field must not raise.
+
+    Completed jobs are listed, and so is any record that actually has analysis
+    results. Failed runs with no results stay off the list, but they are
+    skipped safely instead of crashing the sort.
+    """
+    rows = []
+    for job_id, job in job_map.items():
+        if not isinstance(job, dict):
+            continue
+        results = job.get("results")
+        has_results = isinstance(results, dict)
+        if job.get("status") != "complete" and not has_results:
+            continue
+        jurisdiction = job.get("jurisdiction")
+        state = jurisdiction.get("state_abbrev") if isinstance(jurisdiction, dict) else None
+        score = 0
+        if has_results:
+            try:
+                score = round(float(results.get("overall_score") or 0) * 100)
+            except (TypeError, ValueError):
+                score = 0
+        rows.append({
+            "id": job_id,
+            "date": _job_date(job, job_id),
+            "client_name": job.get("client_name") or "Unknown",
+            "state": state,
+            "overall_score": score,
+        })
+    rows.sort(key=lambda row: row.get("date") or "", reverse=True)
+    return rows
+
+
 @app.route("/history")
 def history():
-    job_list = []
-    for job_id, job in sorted(jobs.items(), key=lambda x: x[1]["date"], reverse=True):
-        if job["status"] == "complete":
-            job_list.append({
-                "id": job_id,
-                "date": job["date"],
-                "client_name": job["client_name"],
-                "state": job.get("jurisdiction", {}).get("state_abbrev") if job.get("jurisdiction") else None,
-                "overall_score": round(job["results"].get("overall_score", 0) * 100) if job.get("results") else 0,
-            })
-    return render_template("history.html", jobs=job_list)
+    return render_template("history.html", jobs=_history_rows(jobs))
 
 
 @app.route("/statutes")
@@ -888,7 +978,7 @@ def _run_analysis(job_id):
 
         # Step 3: Detect jurisdiction
         _update_job(job_id, 13, "Detecting jurisdiction...")
-        if job["state_override"]:
+        if job.get("state_override"):
             from statutes.jurisdiction_detector import US_STATES
             state_name = None
             for name, abbrev in US_STATES.items():
